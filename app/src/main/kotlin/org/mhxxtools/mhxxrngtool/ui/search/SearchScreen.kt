@@ -59,10 +59,11 @@ fun SearchScreen(
                             }
                             s.frameCharm?.let { fr ->
                                 HorizontalDivider()
-                                Text("F${fr.frame}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                Text(fr.elapsed.text(), fontSize = 12.sp)
-                                Text(fr.charm.skillText(), fontWeight = FontWeight.Medium)
-                                Text("${fr.charm.slotDots()}  ${fr.charm.rarityLabel()}", fontSize = 13.sp)
+                                // HTML: フレーム | 経過 | お守り | スロ | レア
+                                Text("${fr.frame}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(fr.elapsed.text(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(fr.charm.skillText(), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                                Text("${fr.charm.slotDots()}    ${fr.charm.rarityLabel()}", fontSize = 13.sp)
                             }
                             return@Column
                         }
@@ -149,7 +150,7 @@ fun SearchScreen(
 
                         if (s.isSearching) LinearProgressIndicator(progress = { s.progress }, Modifier.fillMaxWidth())
 
-                        Text("検索結果（タップでタイマー自動入力）: ${s.resultCount} 件${if(s.resultCount > 300) " (先頭300件)" else ""}",
+                        Text("検索結果（フレーム / 経過 / お守り / スロ / レア）: ${s.resultCount} 件${if(s.resultCount > 300) " (先頭300件)" else ""}",
                             fontWeight = FontWeight.Medium)
                     }
                 }
@@ -166,6 +167,7 @@ fun SearchScreen(
 @Composable
 private fun CharmCard(result: org.mhxxtools.mhxxrngtool.rng.CharmResult, onClick: () -> Unit) {
     val rarityColor = Color(result.charm.rarityColor)
+    val c = result.charm
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -174,15 +176,31 @@ private fun CharmCard(result: org.mhxxtools.mhxxrngtool.rng.CharmResult, onClick
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(10.dp, 40.dp).background(rarityColor))
+            Box(Modifier.size(10.dp, 48.dp).background(rarityColor))
             Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                // HTML: フレーム | お守り | スロ | レア
-                Text("${result.frame}", fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(result.charm.skillText(), fontWeight = FontWeight.Medium)
-                Text("${result.charm.slotDots()}  ${result.charm.rarityLabel()}",
-                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // HTML表と同じ: フレーム | 経過 | お守り | スロ | レア
+                Text(
+                    "${result.frame}",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    result.elapsed.text(),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    c.skillText(),
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp
+                )
+                Text(
+                    "${c.slotDots()}    ${c.rarityLabel()}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

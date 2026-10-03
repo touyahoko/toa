@@ -146,12 +146,20 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = searchVm,
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
-                        timerVm.applyFromFrame(frame)
+                        // 目標フレームとしてセット → 現在地があれば自動で残り計算
+                        timerVm.setTargetFrame(frame)
                         selectedTab = 6
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
-                2 -> ComboScreen(vm = comboVm)
+                2 -> ComboScreen(
+                    vm = comboVm,
+                    onResultTap = { frame ->
+                        // 現在地としてセット → 目標があれば自動で残り計算
+                        timerVm.setCurrentPosFrame(frame)
+                        selectedTab = 6
+                    }
+                )
                 3 -> RewardScreen(vm = rewardVm, kind = appState.kind)
                 4 -> AimPointScreen(vm = aimVm, kind = appState.kind)
                 5 -> OcrScreen(
@@ -167,7 +175,7 @@ fun MainScreen(appState: AppStateViewModel) {
                         selectedTab = 0
                     },
                     onFrameTap = { frame ->
-                        timerVm.applyFromFrame(frame)
+                        timerVm.setTargetFrame(frame)
                         selectedTab = 6
                     }
                 )

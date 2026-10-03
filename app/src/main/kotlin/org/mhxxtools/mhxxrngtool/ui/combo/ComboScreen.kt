@@ -2,6 +2,7 @@ package org.mhxxtools.mhxxrngtool.ui.combo
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,7 +18,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
-fun ComboScreen(vm: ComboViewModel, modifier: Modifier = Modifier) {
+fun ComboScreen(
+    vm: ComboViewModel,
+    onResultTap: (Long) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val s by vm.state.collectAsStateWithLifecycle()
 
     // 動画ファイルピッカー (SAF 経由のため追加権限不要)
@@ -100,6 +105,15 @@ fun ComboScreen(vm: ComboViewModel, modifier: Modifier = Modifier) {
                                 if (s.resultCount > 300) " (先頭300件)" else "",
                             fontWeight = FontWeight.Medium
                         )
+                        if (s.resultCount > 1) {
+                            Text(
+                                "候補が複数あります。先頭=最若フレーム。" +
+                                    "絞り込みは調合列を長くする／開始Fを寄せてください。" +
+                                    "タップでタイマーへ（現在地として使用）。",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
             }
@@ -264,21 +278,35 @@ fun ComboScreen(vm: ComboViewModel, modifier: Modifier = Modifier) {
             }
 
             // ── 検索結果一覧 ──────────────────────────────────────────────
-            items(s.results) { r ->
+            items(s.results.size) { idx ->
+                val r = s.results[idx]
+                val isPrimary = idx == 0
                 Card(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .clickable { onResultTap(r.frame) },
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = if (isPrimary)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surfaceVariant
                     )
                 ) {
                     Column(Modifier.padding(10.dp)) {
-                        Text("F${r.frame}", fontWeight = FontWeight.Bold)
+                        Text(
+                            if (isPrimary) "★ 現在地候補  F${r.frame}" else "候補${idx + 1}  F${r.frame}",
+                            fontWeight = FontWeight.Bold
+                        )
                         Text(
                             r.elapsed.text(),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "タップ → 現在地としてタイマーへ",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }

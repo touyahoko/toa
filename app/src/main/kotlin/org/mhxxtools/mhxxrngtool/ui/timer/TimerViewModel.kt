@@ -9,14 +9,15 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 enum class SnipeMode {
-    /** タイトル画面待機法: wait = (F-700)/30, grace = 0 */
+    /** 残りに応じて自動選択 (連打回数>=1 → 連打、それ以外 → 通常) */
+    AUTO,
+    /** 通常スナイプ (こめこ): wait = 残りF / FPS */
     TITLE,
-    /** コンティニュー連打法: wait = (F-700)%735/30 + 25.33, grace = ceil(count*60/BPM)+11 */
+    /** コンティニュー連打 (こめこ): count=floor(残り/730), wait=(余り)/FPS */
     CONTINUE
 }
 
 data class TimerUiState(
-    // countdown
     val display: String = "00 分 30 秒 00",
     val phaseLabel: String = "待機中",
     val countdownMin: String = "0",
@@ -28,14 +29,19 @@ data class TimerUiState(
     val loop: Boolean = false,
     val sound: Boolean = true,
     val isRunning: Boolean = false,
-    // metronome
     val bpm: String = "120",
     val targetCount: String = "1000",
     val metCount: Int = 0,
     val metRunning: Boolean = false,
-    /** 結果タップ時の自動入力方式 */
-    val snipeMode: SnipeMode = SnipeMode.TITLE,
-    val lastAppliedFrame: Long = -1L
+    val snipeMode: SnipeMode = SnipeMode.AUTO,
+    val lastAppliedFrame: Long = -1L,
+    val currentPosFrame: Long = -1L,
+    val targetFrame: Long = -1L,
+    val remainingFrames: Long = -1L,
+    val mashCount: Long = 0L,
+    val remainderFrames: Long = 0L,
+    val calcSummary: String = "①調合で現在地 → ②検索で目標お守り → 自動で残り計算",
+    val appliedModeLabel: String = ""
 )
 
 class TimerViewModel(app: Application) : AndroidViewModel(app) {
@@ -45,6 +51,11 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     private var countdownJob: Job? = null
     private var metJob: Job? = null
     private var tone: ToneGenerator? = null
+
+    companion object {
+        const val FPS = 30.0
+        const val SKIP_SIZE = 730L
+    }
 
     private fun beep(high: Boolean = true) {
         if (!_state.value.sound) return
@@ -64,11 +75,151 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     fun setSound(v: Boolean) = _state.update { it.copy(sound = v) }
     fun setBpm(v: String) = _state.update { it.copy(bpm = v) }
     fun setTargetCount(v: String) = _state.update { it.copy(targetCount = v) }
+
     fun setSnipeMode(mode: SnipeMode) {
         _state.update { it.copy(snipeMode = mode) }
-        val f = _state.value.lastAppliedFrame
-        if (f >= 0) applyFromFrame(f) // 切り替え時に同じフレームで再計算
+        recalculateSnipe()
     }
+
+    /** 調合結果タップ: 現在地フレーム */
+    fun setCurrentPosFrame(frame: Long) {
+        _state.update {
+            it.copy(currentPosFrame = frame.coerceAtLeast(0L), lastAppliedFrame = frame)
+        }
+        recalculateSnipe()
+    }
+
+    /** お守り検索結果タップ: 目標フレーム */
+    fun setTargetFrame(frame: Long) {
+        _state.update {
+            it.copy(targetFrame = frame.coerceAtLeast(0L), lastAppliedFrame = frame)
+        }
+        recalculateSnipe()
+    }
+
+    fun clearSnipeFrames() {
+        _state.update {
+            it.copy(
+                currentPosFrame = -1L,
+                targetFrame = -1L,
+                remainingFrames = -1L,
+                mashCount = 0L,
+                remainderFrames = 0L,
+                calcSummary = "①調合で現在地 → ②検索で目標お守り → 自動で残り計算",
+                appliedModeLabel = "",
+                lastAppliedFrame = -1L
+            )
+        }
+    }
+
+    /** 後方互換: 単体タップは目標として扱う */
+    fun applyFromFrame(frame: Long) = setTargetFrame(frame)
+
+    /**
+     * 残り = 目標 − 現在地
+     * 短い → 通常待機 (÷FPS)
+     * 長い → 連打 (÷730 + 余り待機)
+     */
+    fun recalculateSnipe() {
+        val s = _state.value
+        val cur = s.currentPosFrame
+        val tgt = s.targetFrame
+
+        if (cur < 0 && tgt < 0) {
+            _state.update {
+                it.copy(calcSummary = "①調合で現在地 → ②検索で目標お守り → 自動で残り計算")
+            }
+            return
+        }
+        if (cur < 0) {
+            applyRemaining(tgt, "現在地未設定のため目標 F$tgt を絶対値で計算（現在地=0）")
+            return
+        }
+        if (tgt < 0) {
+            _state.update {
+                it.copy(
+                    remainingFrames = -1L,
+                    mashCount = 0L,
+                    remainderFrames = 0L,
+                    calcSummary = "現在地 F$cur セット済み。検索タブで目標お守りをタップしてください",
+                    appliedModeLabel = ""
+                )
+            }
+            return
+        }
+
+        val rem = tgt - cur
+        if (rem < 0) {
+            _state.update {
+                it.copy(
+                    remainingFrames = rem,
+                    mashCount = 0L,
+                    remainderFrames = 0L,
+                    calcSummary = "⚠ 目標 F$tgt は現在地 F$cur より前です（残り $rem F）。\n再起動するか別候補を選んでください",
+                    appliedModeLabel = "エラー"
+                )
+            }
+            return
+        }
+        applyRemaining(rem, "現在地 F$cur → 目標 F$tgt")
+    }
+
+    private fun applyRemaining(remaining: Long, note: String) {
+        val rem = remaining.coerceAtLeast(0L)
+        val mash = rem / SKIP_SIZE
+        val rest = rem % SKIP_SIZE
+        val modePref = _state.value.snipeMode
+
+        val effective = when (modePref) {
+            SnipeMode.AUTO -> if (mash >= 1L) SnipeMode.CONTINUE else SnipeMode.TITLE
+            SnipeMode.TITLE -> SnipeMode.TITLE
+            SnipeMode.CONTINUE -> SnipeMode.CONTINUE
+        }
+
+        val waitSec: Double
+        val phase: String
+        val metTarget: String
+        val summary: String
+        val modeLabel: String
+
+        if (effective == SnipeMode.CONTINUE) {
+            waitSec = rest / FPS
+            metTarget = mash.coerceAtLeast(0).toString()
+            modeLabel = "コンテニュー連打"
+            phase = "連打 ${mash}回 + 余り ${rest}F 待機"
+            summary = "$note\n残り ${rem}F\n→ 連打 ${mash}回（1回=${SKIP_SIZE}F）\n→ 余り ${rest}F（約 ${fmt1(waitSec)} 秒）をタイマーへ"
+        } else {
+            waitSec = rem / FPS
+            metTarget = mash.coerceAtLeast(0).toString()
+            modeLabel = "通常スナイプ"
+            phase = "通常待機 残り ${rem}F"
+            val wMin = (waitSec / 60).toInt()
+            val wSec = waitSec % 60
+            summary = "$note\n残り ${rem}F（約 ${wMin}分 ${fmt1(wSec)}秒）\n→ 通常待機（フレーム ÷ ${FPS.toInt()}fps）"
+        }
+
+        val wMin = (waitSec / 60).toInt()
+        val wSec = waitSec % 60
+        val wSecStr = String.format(java.util.Locale.US, "%.3f", wSec)
+
+        _state.update {
+            it.copy(
+                remainingFrames = rem,
+                mashCount = mash,
+                remainderFrames = rest,
+                countdownMin = wMin.toString(),
+                countdownSec = wSecStr,
+                targetCount = metTarget,
+                phaseLabel = phase,
+                calcSummary = summary,
+                appliedModeLabel = modeLabel,
+                display = formatMs(((wMin * 60 + wSec) * 1000).toLong())
+            )
+        }
+    }
+
+    private fun fmt1(v: Double): String =
+        String.format(java.util.Locale.US, "%.1f", v)
 
     private fun parseMs(minS: String, secS: String): Long {
         val m = minS.toIntOrNull() ?: 0
@@ -95,7 +246,6 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
 
         _state.update { it.copy(isRunning = true) }
         countdownJob = viewModelScope.launch {
-            // delay phase
             if (delayMs > 0) {
                 _state.update { it.copy(phaseLabel = "開始までの猶予...") }
                 val t0 = System.currentTimeMillis()
@@ -106,7 +256,6 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
                     delay(16)
                 }
             }
-            // active phase
             _state.update { it.copy(phaseLabel = "カウント中") }
             val t1 = System.currentTimeMillis()
             var lastBeepSec = -1
@@ -182,90 +331,11 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(metRunning = false, metCount = 0) }
     }
 
-
-    /**
-     * 鑑定/検索結果のフレームをタップしたとき。
-     * [snipeMode] に応じて通常 / コンティニュー連打の計算式を切り替える（HTML 準拠）。
-     *
-     * 通常 (TITLE):
-     *   waitSec  = (frame - 700) / 30
-     *   graceSec = 0
-     *
-     * コンティニュー連打 (CONTINUE):
-     *   FPC=735, BPM=57, LOAD_OFF=25.33, MARGIN=11
-     *   finalFrame = frame - 700
-     *   count      = floor(finalFrame / 735)
-     *   waitSec    = (finalFrame % 735) / 30 + 25.33
-     *   graceSec   = ceil(count * 60 / 57) + 11
-     *   メトロノーム目標 = count, BPM = 57
-     */
-    fun applyFromFrame(frame: Long) {
-        val OFFSET = 700L
-        val FPS = 30.0
-        val mode = _state.value.snipeMode
-
-        val waitSec: Double
-        val graceSec: Double
-        val phase: String
-        var metTarget = "0"
-        var metBpm = _state.value.bpm.ifBlank { "120" }
-
-        when (mode) {
-            SnipeMode.TITLE -> {
-                waitSec = if (frame > OFFSET) (frame - OFFSET) / FPS else frame / FPS
-                graceSec = 0.0
-                // 連打回数も参考表示用にメトロノームへ
-                val (mashes, _, _) = org.mhxxtools.mhxxrngtool.rng.continueMashInfo(frame)
-                metTarget = mashes.coerceAtLeast(0).toString()
-                phase = "通常スナイプ F$frame → 待機後にContinue (±30f)"
-            }
-            SnipeMode.CONTINUE -> {
-                // HTML calcContinueMethod
-                val AC_FPC = 735.0
-                val AC_BPM = 57
-                val AC_LOAD_OFF = 25.33
-                val AC_MARGIN = 11.0
-                val finalFrame = (frame - OFFSET).coerceAtLeast(0L).toDouble()
-                val count = kotlin.math.floor(finalFrame / AC_FPC).toLong()
-                val remFrame = finalFrame % AC_FPC
-                waitSec = remFrame / FPS + AC_LOAD_OFF
-                graceSec = kotlin.math.ceil(count * 60.0 / AC_BPM) + AC_MARGIN
-                metTarget = count.coerceAtLeast(0).toString()
-                metBpm = AC_BPM.toString()
-                phase = "連打スナイプ F$frame → 連打${count}回 + 待機 (BPM$AC_BPM)"
-            }
-        }
-
-        val wMin = (waitSec / 60).toInt()
-        val wSec = waitSec % 60
-        val wSecStr = String.format(java.util.Locale.US, "%.3f", wSec)
-        val gMin = (graceSec / 60).toInt()
-        val gSec = graceSec % 60
-        val gSecStr = String.format(java.util.Locale.US, "%.3f", gSec)
-
-        _state.update {
-            it.copy(
-                lastAppliedFrame = frame,
-                countdownMin = wMin.toString(),
-                countdownSec = wSecStr,
-                delayMin = gMin.toString(),
-                delaySec = gSecStr,
-                earlyMin = "0",
-                earlySec = "0",
-                display = formatMs(parseMs(wMin.toString(), wSecStr)),
-                phaseLabel = phase,
-                targetCount = metTarget,
-                bpm = metBpm,
-                metCount = 0
-            )
-        }
-    }
-
     override fun onCleared() {
-        super.onCleared()
         countdownJob?.cancel()
         metJob?.cancel()
         tone?.release()
         tone = null
+        super.onCleared()
     }
 }

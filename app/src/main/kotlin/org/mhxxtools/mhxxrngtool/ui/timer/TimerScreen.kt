@@ -23,6 +23,46 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // ── スナイプ自動計算 ──────────────────────────────────────
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer
+            )
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("🎯 スナイプ自動計算", fontWeight = FontWeight.Bold)
+                Text(
+                    "現在地: " + if (s.currentPosFrame >= 0) "F${s.currentPosFrame}" else "未設定（調合タブでタップ）",
+                    fontSize = 13.sp
+                )
+                Text(
+                    "目標: " + if (s.targetFrame >= 0) "F${s.targetFrame}" else "未設定（検索タブでタップ）",
+                    fontSize = 13.sp
+                )
+                if (s.remainingFrames >= 0) {
+                    Text("残り: ${s.remainingFrames}F", fontWeight = FontWeight.Medium)
+                    if (s.appliedModeLabel.isNotEmpty()) {
+                        Text(
+                            "方式: ${s.appliedModeLabel}" +
+                                if (s.mashCount > 0) " / 連打 ${s.mashCount}回 / 余り ${s.remainderFrames}F" else "",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Text(
+                    s.calcSummary,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { vm.recalculateSnipe() }) { Text("再計算") }
+                    OutlinedButton(onClick = { vm.clearSnipeFrames() }) { Text("クリア") }
+                }
+            }
+        }
+
         // ── カウントダウン ────────────────────────────────────────
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -34,25 +74,32 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
                 )
                 Row(
                     Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    FilterChip(
+                        selected = s.snipeMode == SnipeMode.AUTO,
+                        onClick = { vm.setSnipeMode(SnipeMode.AUTO) },
+                        label = { Text("自動", fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
                     FilterChip(
                         selected = s.snipeMode == SnipeMode.TITLE,
                         onClick = { vm.setSnipeMode(SnipeMode.TITLE) },
-                        label = { Text("通常スナイプ", fontSize = 12.sp) },
+                        label = { Text("通常", fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = s.snipeMode == SnipeMode.CONTINUE,
                         onClick = { vm.setSnipeMode(SnipeMode.CONTINUE) },
-                        label = { Text("コンティニュー連打", fontSize = 12.sp) },
+                        label = { Text("連打", fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                 }
                 Text(
                     when (s.snipeMode) {
-                        SnipeMode.TITLE -> "タイトル画面で待機 → Continue 1回 (F-700)/30秒"
-                        SnipeMode.CONTINUE -> "連打 + 残り待機 (HTML: FPC735 / BPM57)"
+                        SnipeMode.AUTO -> "自動: 残り≥730Fなら連打、未満なら通常待機"
+                        SnipeMode.TITLE -> "通常: 残りF ÷ 30fps で待機"
+                        SnipeMode.CONTINUE -> "連打: 回数=残り÷730 / 余り÷30fpsで待機"
                     },
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
