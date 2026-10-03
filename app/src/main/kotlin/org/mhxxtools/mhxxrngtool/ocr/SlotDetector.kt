@@ -38,8 +38,8 @@ object SlotDetector {
     fun parseFromText(raw: String): Int? {
         if (raw.isBlank()) return null
         var t = SkillMatcher.normalizeText(raw)
-        // 丸系を ◯ に統一
-        t = t.replace(Regex("[〇○◯ＯOｏo◎●◉]"), "◯")
+        // 丸系を ◯ に統一（スマホ写真で出やすい ０ Q も追加）
+        t = t.replace(Regex("[〇○◯ＯOｏo◎●◉◯０Qq]"), "◯")
         // スペース区切りの丸を連結  ◯ ◯ ◯ → ◯◯◯
         t = t.replace(Regex("(?:◯\\s*){1,3}◯")) { mr ->
             "◯".repeat(mr.value.count { it == '◯' })

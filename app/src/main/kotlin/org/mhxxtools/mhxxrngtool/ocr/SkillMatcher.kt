@@ -33,8 +33,8 @@ val SKILL_ALIASES: Map<String, Int> = mapOf(
     "研磨" to 37, "研磨術" to 37,
     "鈍器" to 38,
     "抜会" to 39, "抜刀会心" to 39,
-    "抜減" to 40, "抜刀減気" to 40,
-    "納刀" to 41, "納研" to 42, "納刀研磨" to 42,
+    "抜減" to 40, "抜刀減気" to 40, "抜刀減氣" to 40, "抜刀 減気" to 40, "抜 刀減気" to 40,
+    "納刀" to 41, "納 刀" to 41, "納刀 " to 41, "納研" to 42, "納刀研磨" to 42,
     "刃鱗" to 43, "刃鳞" to 43,
     "装速" to 44, "装填速度" to 44,
     "反動" to 45,
@@ -595,7 +595,7 @@ object SkillMatcher {
 
     // ── スロット候補を抽出 ────────────────────────────────────────────────────
     fun extractSlotCandidates(text: String): List<Int> {
-        val unified = text.replace(Regex("[〇○◯ＯOｏo◎●◉]"), "◯")
+        val unified = text.replace(Regex("[〇○◯ＯOｏo◎●◉◯０Qq]"), "◯")
         // スロット行だけ（全文の装飾○は使わない）
         val slotLine = Regex("スロ(?:ット)?[^\\n]{0,60}").find(unified)?.value ?: ""
         if (slotLine.isEmpty()) return emptyList()
@@ -834,12 +834,17 @@ object SkillMatcher {
 //  スロット   ○○○                    ← CROP_SLOT
 // ======================================================================
 object CropRegion {
+    /**
+     * 基準: 1280×670〜720 の鑑定結果画面（提供画像 1162.jpg 含む）
+     * 相対座標は解像度非依存。スマホ撮影で少しずれてもラベルアンカーが主、
+     * ここはフォールバック切り出し用。
+     */
     /** 固有スキル1 行 (left, top, right, bottom) */
-    val SKILL1 = floatArrayOf(0.320f, 0.245f, 0.640f, 0.308f)
+    val SKILL1 = floatArrayOf(0.38f, 0.20f, 0.68f, 0.28f)
     /** 固有スキル2 行 */
-    val SKILL2 = floatArrayOf(0.320f, 0.298f, 0.640f, 0.360f)
-    /** スロット行（やや広め。Switch 1280x720 キャプチャ想定） */
-    val SLOT   = floatArrayOf(0.28f, 0.33f, 0.62f, 0.44f)
+    val SKILL2 = floatArrayOf(0.38f, 0.26f, 0.68f, 0.34f)
+    /** スロット行（やや広め。丸3つ＋余白を確実に含む） */
+    val SLOT   = floatArrayOf(0.35f, 0.31f, 0.65f, 0.42f)
 }
 
 // ======================================================================
@@ -929,7 +934,7 @@ fun parseSkillCrop(
 fun parseSlotCrop(rawText: String): Int? {
     if (rawText.isBlank()) return null
     val normalized = SkillMatcher.normalizeText(rawText)
-        .replace(Regex("[〇○◯ＯOｏo◎●◉]"), "◯")
+        .replace(Regex("[〇○◯ＯOｏo◎●◉◯０Qq]"), "◯")
 
     if (Regex("[-－─—–―_ー]{2,}").containsMatchIn(normalized)) return 0
     if (Regex("なし|無").containsMatchIn(normalized)) return 0
@@ -987,6 +992,8 @@ fun parseOcrCharm(rawText: String): OcrCharm {
     val lines = rawText.split(Regex("[\\n\\r]+")).map { it.trim() }.filter { it.isNotEmpty() }
 
     // ── 種類検出 ──────────────────────────────────────────────────────────
+    // 「天の護石」は RARE 8〜10 帯の表示名。風化テーブル (kind=0) に属することが多い。
+    // ただし RARE 数字が取れればそちらを優先し、取れない場合のみ天の護石で 0 を仮置きする。
     var kind = when {
         norm.contains("風化") -> 0
         norm.contains("古び") -> 1
@@ -1007,13 +1014,18 @@ fun parseOcrCharm(rawText: String): OcrCharm {
             }
         }
     }
+    // 天の護石フォールバック（RARE が読めなかったスマホ写真向け）
+    if (kind < 0 && (norm.contains("天の護石") || norm.contains("天の護"))) {
+        kind = 0
+    }
 
     // スロット: 「スロット」行だけを見る（全文の装飾○は無視）
     //   ○ / ○○ / ○○○ → 1〜3
     //   --- / - - -     → 0
     var slots = -1
     run {
-        var unified = norm.replace(Regex("[〇○◯ＯOｏo◎●◉]"), "◯")
+        // スマホ写真でよく出る丸・ゼロ誤読をすべて ◯ に正規化
+        var unified = norm.replace(Regex("[〇○◯ＯOｏo◎●◉◯０Qq]"), "◯")
         unified = unified.replace(Regex("(?:◯\\s*){1,3}◯")) { mr ->
             "◯".repeat(mr.value.count { it == '◯' })
         }

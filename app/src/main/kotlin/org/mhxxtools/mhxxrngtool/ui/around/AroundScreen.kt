@@ -80,14 +80,15 @@ private fun AroundCard(frame: Long, charm: org.mhxxtools.mhxxrngtool.rng.Charm, 
             Box(Modifier.size(8.dp, 36.dp).background(rarityColor))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Row {
+                // HTML周辺表と同じ: フレーム / お守り / ●○○ / Rn
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     if (isCenter) Text("▶ ", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    Text("F$frame  ${MHXXEngine.formatElapsed(frame)}", fontSize = 11.sp,
+                    Text("$frame", fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(charm.skillText(), fontWeight = if (isCenter) FontWeight.Bold else FontWeight.Normal)
-                Text("スロット${charm.slot}  ${charm.rarity}★  連打: ${MHXXEngine.formatMash(frame)}",
-                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${charm.slotDots()}  ${charm.rarityLabel()}",
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

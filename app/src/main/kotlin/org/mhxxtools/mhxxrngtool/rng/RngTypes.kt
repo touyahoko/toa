@@ -24,6 +24,7 @@ data class Charm(
     val rarity: Int,
     val rarityColor: Long   // ARGB as Long (0xFFRRGGBB)
 ) {
+    /** HTMLツールの charm.text と同じ表記: 「溜め短縮 +6 / 納刀 +6」 */
     fun skillText(): String {
         val sign1 = if (skill1Pts >= 0) "+" else ""
         val s1 = "${skill1Name.replace("　", "").trim()} $sign1$skill1Pts"
@@ -33,6 +34,15 @@ data class Charm(
                    "$s1 / ${skill2Name.replace("　", "").trim()} $sign2$skill2Pts"
                }
     }
+
+    /** HTML slotDots: ●×n + ○×(3-n) */
+    fun slotDots(): String {
+        val n = slot.coerceIn(0, 3)
+        return "●".repeat(n) + "○".repeat(3 - n)
+    }
+
+    /** HTML: R10 */
+    fun rarityLabel(): String = "R$rarity"
 
     companion object {
         fun fromRaw(raw: RawCharm): Charm {

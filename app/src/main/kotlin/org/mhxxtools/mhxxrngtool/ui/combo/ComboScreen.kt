@@ -186,7 +186,7 @@ fun ComboScreen(vm: ComboViewModel, modifier: Modifier = Modifier) {
                             )
                         }
                         Text(
-                            "間隔: 何フレームおきにOCRするか (デフォルト 3)",
+                            "間隔: 何フレームおきに読むか (テンプレート照合は 1 推奨)",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                         )
@@ -219,6 +219,14 @@ fun ComboScreen(vm: ComboViewModel, modifier: Modifier = Modifier) {
                             )
                             Text(
                                 "解析中… ${(s.analyzeProgress * 100).toInt()}%",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
+                        if (s.craftSummary.isNotEmpty()) {
+                            Text(
+                                s.craftSummary,
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer
                             )

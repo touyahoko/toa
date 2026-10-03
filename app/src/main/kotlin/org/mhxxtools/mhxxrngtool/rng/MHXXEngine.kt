@@ -290,42 +290,71 @@ class MHXXEngine(kind: Int = 0) {
         shouldStop: () -> Boolean = { false },
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Sequence<FrameResult> = sequence {
+        // notebook: 先頭3件・末尾99をカット
         var pos = comboPositions.drop(3).toMutableList()
         if (pos.isNotEmpty() && pos.last() == 99) pos.removeAt(pos.lastIndex)
         if (pos.size <= 1) return@sequence
-        val fullDif = pos.zipWithNext { a, b -> b - a }
-        if (fullDif.any { it !in 2..4 }) return@sequence
 
+        val fullDif = pos.zipWithNext { a, b -> b - a }
         val lut = comboLookupTable()
 
-        // 完全一致 → だめなら末尾寄り短いパターンで再試行（OCR途中誤読に耐性）
-        val candidates = mutableListOf<List<Int>>()
-        candidates.add(fullDif)
-        // 末尾 20 / 15 / 12 件の増分（十分な長さのみ）
-        for (takeN in listOf(20, 15, 12)) {
-            if (fullDif.size > takeN + 2) {
-                candidates.add(fullDif.takeLast(takeN))
+        // 候補パターン構築（OCRノイズ耐性）
+        // 1) 全差分が 2/3/4 ならフルパターン
+        // 2) 末尾 20/15/12 の短縮
+        // 3) 無効増分がある場合: 最長の連続有効セグメント
+        val candidates = mutableListOf<Pair<List<Int>, Int>>() // dif to coveredRawLen
+
+        fun addCandidate(dif: List<Int>, coveredRawLen: Int) {
+            if (dif.size >= 2 && dif.all { it in 2..4 }) {
+                candidates.add(dif to coveredRawLen)
             }
         }
+
+        if (fullDif.isNotEmpty() && fullDif.all { it in 2..4 }) {
+            addCandidate(fullDif, comboPositions.size)
+            for (takeN in listOf(20, 15, 12)) {
+                if (fullDif.size > takeN + 2) {
+                    addCandidate(fullDif.takeLast(takeN), takeN + 1 + 3)
+                }
+            }
+        } else {
+            // 連続する有効増分の最長区間を探す
+            var bestStart = 0
+            var bestLen = 0
+            var i = 0
+            while (i < fullDif.size) {
+                if (fullDif[i] in 2..4) {
+                    val s = i
+                    while (i < fullDif.size && fullDif[i] in 2..4) i++
+                    val len = i - s
+                    if (len > bestLen) {
+                        bestLen = len
+                        bestStart = s
+                    }
+                } else i++
+            }
+            if (bestLen >= 2) {
+                val seg = fullDif.subList(bestStart, bestStart + bestLen)
+                // coveredRawLen: 先頭3 + セグメント内の位置数
+                addCandidate(seg, bestLen + 1 + 3)
+                for (takeN in listOf(20, 15, 12)) {
+                    if (seg.size > takeN) {
+                        addCandidate(seg.takeLast(takeN), takeN + 1 + 3)
+                    }
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) return@sequence
 
         val seenFrames = mutableSetOf<Long>()
         var emitted = 0L
 
-        for (dif in candidates) {
+        for ((dif, coveredRawLen) in candidates) {
             if (shouldStop()) return@sequence
             val se = MHXXEngine(this@MHXXEngine.kind)
             se.jump(start)
             repeat(7) { se.descend() }
-
-            // このパターンがカバーする「生データ上の調合回数」
-            // fullDif 使用時: rawLen = comboPositions.size
-            // 短縮時: 末尾 takeN 件の増分 → 対応する生位置数 = takeN+1 + 先頭3
-            val coveredRawLen = if (dif.size == fullDif.size) {
-                comboPositions.size
-            } else {
-                // pos の末尾 (dif.size+1) 件 + カットした先頭3
-                dif.size + 1 + 3
-            }
 
             val hits = mutableListOf<Long>()
             searchStride(se, step, dif, 5, lut, shouldStop).forEach { hits.add(it) }
@@ -339,9 +368,6 @@ class MHXXEngine(kind: Int = 0) {
                     onProgress(emitted, hits.size.toLong().coerceAtLeast(1L))
                 }
             }
-            // 完全一致で1件以上見つかれば十分
-            if (dif.size == fullDif.size && emitted > 0) break
-            // 短縮で見つかっても続行せず返す（最初にヒットした長さを優先）
             if (emitted > 0) break
         }
     }

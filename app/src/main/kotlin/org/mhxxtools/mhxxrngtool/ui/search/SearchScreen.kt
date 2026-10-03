@@ -62,7 +62,7 @@ fun SearchScreen(
                                 Text("F${fr.frame}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                 Text(fr.elapsed.text(), fontSize = 12.sp)
                                 Text(fr.charm.skillText(), fontWeight = FontWeight.Medium)
-                                Text("スロット ${fr.charm.slot}  /  レア ${fr.charm.rarity}", fontSize = 12.sp)
+                                Text("${fr.charm.slotDots()}  ${fr.charm.rarityLabel()}", fontSize = 13.sp)
                             }
                             return@Column
                         }
@@ -177,12 +177,12 @@ private fun CharmCard(result: org.mhxxtools.mhxxrngtool.rng.CharmResult, onClick
             Box(Modifier.size(10.dp, 40.dp).background(rarityColor))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("F${result.frame}  ${MHXXEngine.formatElapsed(result.frame)}", fontSize = 12.sp,
+                // HTML: フレーム | お守り | スロ | レア
+                Text("${result.frame}", fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(result.charm.skillText(), fontWeight = FontWeight.Medium)
-                Text("スロット${result.charm.slot}  ${result.charm.rarity}★  " +
-                     "連打: ${MHXXEngine.formatMash(result.frame)}",
-                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${result.charm.slotDots()}  ${result.charm.rarityLabel()}",
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
