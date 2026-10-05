@@ -294,17 +294,16 @@ class MHXXEngine(kind: Int = 0) {
     // ── 調合列検索 ─────────────────────────────────────────────────────────
 
     /**
-     * 調合列検索（mhxx-combo-scan Searcher 完全準拠）
+     * 調合列検索（mhxx-combo-scan Searcher 準拠 + 実用フォールバック）
      *
-     * combo-core/src/search.rs と同じ処理:
+     * combo-core/src/search.rs の基本ロジック:
      * 1. jumpPure(start)  … 7roll なしの純粋 jump
      * 2. 先頭3件・末尾99をカット → 隣接差分 (2/3/4 以外は検索中止)
      * 3. stride=5 で KMP 検索
-     *    生産数: (w & 0xFFFF) % 100 → 0..24=2, 25..74=3, 75..99=4
-     * 4. ヒット補正 (Searcher::offset + consumed - STRIDE*(n-1)):
-     *      frame = start - STRIDE*3 - 15 + 2*(rawLen-1) + consumed - STRIDE*(n-1)
-     *    ここで searchStride が返す hitI = consumed - STRIDE*(n-1)
-     *    よって frame = start + hitI - 15 - 15 + 2*(rawLen-1)
+     * 4. frame = start + hitI - STRIDE*3 - 15 + 2*(rawLen-1)
+     *
+     * 完全一致で0件のとき、末尾 20/15/12 件の増分で再検索する
+     * （長い列や動画OCRの途中誤読への実用対策）。
      */
     fun searchCombo(
         start: Long, step: Long, comboPositions: List<Int>,
@@ -312,34 +311,50 @@ class MHXXEngine(kind: Int = 0) {
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Sequence<FrameResult> = sequence {
         val rawLen = comboPositions.size
-        // pattern_from: 先頭3つカット、末尾99カット
         var pos = comboPositions.drop(3)
         if (pos.isNotEmpty() && pos.last() == 99) {
             pos = pos.dropLast(1)
         }
         if (pos.size <= 1) return@sequence
 
-        val dif = pos.zipWithNext { a, b -> b - a }
-        // InvalidDifference → 検索しない
-        if (dif.any { it !in 2..4 }) return@sequence
+        val fullDif = pos.zipWithNext { a, b -> b - a }
+        if (fullDif.any { it !in 2..4 }) return@sequence
 
         val lut = comboLookupTable()
-        // mhxx-combo-scan: state = jump(start_frame)  … pure, no 7-roll
-        val se = MHXXEngine(this@MHXXEngine.kind)
-        se.jumpPure(start)
-
-        // offset = start - STRIDE*3 - 15 + 2*(raw_len - 1)
-        // hitI from searchStride = consumed - STRIDE*(n-1)
-        // result = offset + hitI  (but hitI already relative; add start once)
         val stride = 5L
-        var emitted = 0L
-        searchStride(se, step, dif, 5, lut, shouldStop).forEach { hitI ->
-            val resultFrame = start + hitI - stride * 3L - 15L + 2L * (rawLen - 1L)
-            if (resultFrame >= 0) {
-                yield(FrameResult(resultFrame, watch(resultFrame)))
-                emitted++
-                onProgress(emitted, emitted)
+
+        // 候補パターン。長い完全一致は一致が極めて稀なので、
+        // 実用上は末尾短縮 (12→15→20→完全) の順で試し、最初にヒットした長さで返す。
+        // フレーム補正の rawLen は「そのパターンがカバーする生データ長」。
+        val candidates = mutableListOf<Pair<List<Int>, Int>>() // (dif, coveredRawLen)
+        for (takeN in listOf(12, 15, 20)) {
+            if (fullDif.size >= takeN) {
+                candidates.add(fullDif.takeLast(takeN) to (takeN + 1 + 3))
             }
+        }
+        // 完全一致は最後（短縮で見つからなかったときのみ）
+        if (fullDif.size > 20) {
+            candidates.add(fullDif to rawLen)
+        }
+
+        val seen = mutableSetOf<Long>()
+        var emitted = 0L
+
+        for ((dif, coveredRawLen) in candidates) {
+            if (shouldStop()) return@sequence
+            val se = MHXXEngine(this@MHXXEngine.kind)
+            se.jumpPure(start)
+
+            searchStride(se, step, dif, 5, lut, shouldStop).forEach { hitI ->
+                val resultFrame = start + hitI - stride * 3L - 15L + 2L * (coveredRawLen - 1L)
+                if (resultFrame >= 0 && seen.add(resultFrame)) {
+                    yield(FrameResult(resultFrame, watch(resultFrame)))
+                    emitted++
+                    onProgress(emitted, emitted)
+                }
+            }
+            // いずれかで1件以上見つかれば終了
+            if (emitted > 0) break
         }
     }
 
