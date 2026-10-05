@@ -294,67 +294,34 @@ class MHXXEngine(kind: Int = 0) {
     // ── 調合列検索 ─────────────────────────────────────────────────────────
 
     /**
-     * 調合列検索（mhxx-combo-scan Searcher 準拠 + 実用フォールバック）
+     * 調合列検索（mhxx-combo-scan search.rs Searcher 完全移植）
      *
-     * combo-core/src/search.rs の基本ロジック:
-     * 1. jumpPure(start)  … 7roll なしの純粋 jump
-     * 2. 先頭3件・末尾99をカット → 隣接差分 (2/3/4 以外は検索中止)
-     * 3. stride=5 で KMP 検索
-     * 4. frame = start + hitI - STRIDE*3 - 15 + 2*(rawLen-1)
-     *
-     * 完全一致で0件のとき、末尾 20/15/12 件の増分で再検索する
-     * （長い列や動画OCRの途中誤読への実用対策）。
+     * ComboSearcher (= search.rs::Searcher) をそのまま使う。
+     * - jumpPure(start) / yield_of / STRIDE=5 / KMP
+     * - frame = offset + consumed - STRIDE*(n-1)
+     * - offset = start - STRIDE*3 - 15 + 2*(raw_len-1)
      */
     fun searchCombo(
         start: Long, step: Long, comboPositions: List<Int>,
         shouldStop: () -> Boolean = { false },
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Sequence<FrameResult> = sequence {
-        val rawLen = comboPositions.size
-        var pos = comboPositions.drop(3)
-        if (pos.isNotEmpty() && pos.last() == 99) {
-            pos = pos.dropLast(1)
-        }
-        if (pos.size <= 1) return@sequence
-
-        val fullDif = pos.zipWithNext { a, b -> b - a }
-        if (fullDif.any { it !in 2..4 }) return@sequence
-
-        val lut = comboLookupTable()
-        val stride = 5L
-
-        // 候補パターン。長い完全一致は一致が極めて稀なので、
-        // 実用上は末尾短縮 (12→15→20→完全) の順で試し、最初にヒットした長さで返す。
-        // フレーム補正の rawLen は「そのパターンがカバーする生データ長」。
-        val candidates = mutableListOf<Pair<List<Int>, Int>>() // (dif, coveredRawLen)
-        for (takeN in listOf(12, 15, 20)) {
-            if (fullDif.size >= takeN) {
-                candidates.add(fullDif.takeLast(takeN) to (takeN + 1 + 3))
-            }
-        }
-        // 完全一致は最後（短縮で見つからなかったときのみ）
-        if (fullDif.size > 20) {
-            candidates.add(fullDif to rawLen)
-        }
-
-        val seen = mutableSetOf<Long>()
+        val searcher = ComboSearcher.create(comboPositions, start) ?: return@sequence
+        // 大きめのチャンクで step（進捗報告用）
+        val chunk = 2_000_000L
         var emitted = 0L
-
-        for ((dif, coveredRawLen) in candidates) {
+        while (searcher.consumed < step) {
             if (shouldStop()) return@sequence
-            val se = MHXXEngine(this@MHXXEngine.kind)
-            se.jumpPure(start)
-
-            searchStride(se, step, dif, 5, lut, shouldStop).forEach { hitI ->
-                val resultFrame = start + hitI - stride * 3L - 15L + 2L * (coveredRawLen - 1L)
-                if (resultFrame >= 0 && seen.add(resultFrame)) {
-                    yield(FrameResult(resultFrame, watch(resultFrame)))
+            val remain = step - searcher.consumed
+            val hits = searcher.step(minOf(chunk, remain), shouldStop)
+            for (frame in hits) {
+                if (frame >= 0) {
+                    yield(FrameResult(frame, watch(frame)))
                     emitted++
                     onProgress(emitted, emitted)
                 }
             }
-            // いずれかで1件以上見つかれば終了
-            if (emitted > 0) break
+            onProgress(searcher.consumed, step)
         }
     }
 
