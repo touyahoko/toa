@@ -59,14 +59,15 @@ class OcrViewModel : ViewModel() {
 
     /**
      * 鑑定画面スクショ（基準解像度 1200×675）における
-     * 固有スキル1 / 固有スキル2 / スロット 各行の固定クロップ領域（相対座標）。
+     * お守り情報パネルの固定クロップ領域（相対座標 0.0〜1.0）。
      *
-     * 実測に基づく行分割。少し余白を持たせて位置ずれに強くしている。
+     * 実測座標（絶対）: left=445, top=88, right=792, bottom=235
+     * 幅=347 / 高さ=147
      */
-    // left, top, right, bottom
-    private val CROP_SKILL1 = floatArrayOf(0.350f, 0.130f, 0.650f, 0.210f) // ≈ (420,88)-(780,142)
-    private val CROP_SKILL2 = floatArrayOf(0.350f, 0.195f, 0.650f, 0.275f) // ≈ (420,132)-(780,186)
-    private val CROP_SLOT   = floatArrayOf(0.340f, 0.255f, 0.660f, 0.350f) // ≈ (408,172)-(792,236)
+    private val FIXED_CROP_LEFT   = 445f / 1200f   // 0.3708
+    private val FIXED_CROP_TOP    =  88f / 675f    // 0.1304
+    private val FIXED_CROP_RIGHT  = 792f / 1200f   // 0.6600
+    private val FIXED_CROP_BOTTOM = 235f / 675f    // 0.3481
 
     fun recognizeFromUri(
         context: Context,
@@ -77,34 +78,28 @@ class OcrViewModel : ViewModel() {
         _state.update { OcrUiState(isProcessing = true, ocrStatus = "OCR 認識中…") }
 
         viewModelScope.launch {
-            // 3行を個別に固定クロップして OCR（スキル2・スロットの取りこぼしを防ぐ）
+            // お守り情報パネルのみを固定クロップして OCR
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch
             }
-
-            suspend fun ocrRow(region: FloatArray): String =
-                AndroidOcr.recognizeCropped(bmp, region[0], region[1], region[2], region[3])
-                    .getOrDefault("")
-
-            val text1 = ocrRow(CROP_SKILL1)
-            val text2 = ocrRow(CROP_SKILL2)
-            val textSlot = ocrRow(CROP_SLOT)
+            val rawText = AndroidOcr.recognizeCropped(
+                bmp,
+                FIXED_CROP_LEFT, FIXED_CROP_TOP,
+                FIXED_CROP_RIGHT, FIXED_CROP_BOTTOM
+            ).getOrElse { e ->
+                bmp.recycle()
+                setError("OCR エラー: ${e.message}"); return@launch
+            }
             bmp.recycle()
 
-            // 3行のテキストを結合して既存の parseOcrCharm に渡す（互換性維持）
-            val combined = listOf(text1, text2, textSlot)
-                .filter { it.isNotBlank() }
-                .joinToString("\n")
-
-            if (combined.isBlank()) {
-                setError("テキストを検出できませんでした。\n中央のお守り情報パネルが写っている鑑定画面を使用してください。")
+            if (rawText.isBlank()) {
+                setError("テキストを検出できませんでした。\n中央のお守り情報パネルが写っている鑑定画面（1200×675）を使用してください。")
                 return@launch
             }
 
-            val charm = parseOcrCharm(combined)
-
-            // スロットは専用パーサーを優先（○ の認識精度が高い）
-            val slotFromCrop = parseSlotCrop(textSlot)
+            val charm = parseOcrCharm(rawText)
+            // スロットは専用パーサーも試す（○ の認識精度向上）
+            val slotFromCrop = parseSlotCrop(rawText)
             val slots = when {
                 slotFromCrop != null -> slotFromCrop
                 charm.slots in 0..3 -> charm.slots
@@ -112,7 +107,7 @@ class OcrViewModel : ViewModel() {
             }
 
             if (charm.skills.isEmpty()) {
-                setError("スキルを認識できませんでした。\nお守り情報（スキル名・ポイント・スロット）がはっきり写っているか確認してください。\n(skill1='$text1' / skill2='$text2')")
+                setError("スキルを認識できませんでした。\nお守り情報（スキル名・ポイント・スロット）がはっきり写っているか確認してください。\n(OCR='$rawText')")
                 return@launch
             }
 
