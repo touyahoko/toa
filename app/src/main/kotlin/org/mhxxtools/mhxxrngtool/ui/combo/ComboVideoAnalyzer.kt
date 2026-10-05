@@ -109,39 +109,34 @@ object ComboVideoAnalyzer {
                 }
 
                 val analysis = ComboCrossCheck.analyze(readings)
+                // 本家どおり: 不明値が1つでもあれば確定列にはしない
+                // (mapNotNull でつなぐと 05→11 のような偽の飛びが生まれる)
                 val seq = ComboCrossCheck.toSearchSequence(analysis.cumulative)
-                    ?: analysis.cumulative.mapNotNull { it }.let { if (it.size >= 5) it else emptyList() }
 
-                if (seq.isEmpty() && analysis.crafts.isEmpty()) {
+                if (seq == null && analysis.crafts.isEmpty()) {
                     error(
                         if (readings.none { it.crafting })
-                            "調合画面が見つかりませんでした。解像度が 1280×720 か、調合パネルが映っているか確認してください。"
+                            "調合画面が見つかりませんでした。解像度が 1280×720 / 1920×1080 か、調合パネルが映っているか確認してください。"
                         else
                             "数値列を組み立てられませんでした。${analysis.issues.joinToString("; ")}"
                     )
                 }
 
+                // 確定列があればそれを使う。不明値がある場合は issues に残して空列
+                val finalSeq = seq ?: emptyList()
+                val extraIssues = if (seq == null && analysis.cumulative.isNotEmpty()) {
+                    listOf(
+                        "途中に不明な増分があります (曖昧な区間 ${analysis.crafts.count { it.resolution is ComboCrossCheck.Resolution.Ambiguous || it.resolution is ComboCrossCheck.Resolution.Failed }} 件)。" +
+                            " 動画を最初から撮るか、数値列を手入力してください。"
+                    )
+                } else emptyList()
+
                 AnalyzeResult(
-                    cumulative = seq.ifEmpty {
-                        // fallback: product values only in order of segments
-                        analysis.crafts.flatMap { c ->
-                            listOf(c.before) + when (val r = c.resolution) {
-                                is ComboCrossCheck.Resolution.Exact -> {
-                                    var a = c.before
-                                    r.yields.map { a += it; a }
-                                }
-                                is ComboCrossCheck.Resolution.Inferred -> {
-                                    var a = c.before
-                                    r.yields.map { a += it; a }
-                                }
-                                else -> listOf(c.after)
-                            }
-                        }.distinct()
-                    },
+                    cumulative = finalSeq,
                     crafts = analysis.crafts,
                     materialFrom = analysis.materialFrom,
                     materialTo = analysis.materialTo,
-                    issues = analysis.issues,
+                    issues = analysis.issues + extraIssues,
                     framesRead = readings.size,
                     craftingFrames = readings.count { it.crafting }
                 )

@@ -124,24 +124,21 @@ object ComboFrameReader {
     }
 
     /**
-     * Extract brightness (max of R,G,B) for rect ±1px padding, then binarize relative to frame.
-     * Returns flat array of size (w+2)*(h+2) as 0..255 brightness.
+     * 本家 Patch::new 準拠: rect ±1px の明るさ (max R,G,B)。
+     * 1280×720 座標系の各ピクセルを sx/sy で実フレームに最近傍マッピング。
      */
     private fun extractPatch(frame: Bitmap, rect: Rect, sx: Float, sy: Float): IntArray {
         val pad = 1
         val w = rect.width + 2 * pad
         val h = rect.height + 2 * pad
         val out = IntArray(w * h)
-        val x0 = ((rect.x - pad) * sx).toInt().coerceIn(0, frame.width - 1)
-        val y0 = ((rect.y - pad) * sy).toInt().coerceIn(0, frame.height - 1)
-        val x1 = ((rect.x + rect.width + pad) * sx).toInt().coerceIn(1, frame.width)
-        val y1 = ((rect.y + rect.height + pad) * sy).toInt().coerceIn(1, frame.height)
-        // sample into w*h grid
+        val baseX = rect.x - pad
+        val baseY = rect.y - pad
         for (row in 0 until h) {
-            val fy = y0 + ((y1 - y0) * row / h.coerceAtLeast(1)).coerceIn(0, frame.height - 1)
+            val srcY = ((baseY + row) * sy).toInt().coerceIn(0, frame.height - 1)
             for (col in 0 until w) {
-                val fx = x0 + ((x1 - x0) * col / w.coerceAtLeast(1)).coerceIn(0, frame.width - 1)
-                val c = frame.getPixel(fx, fy)
+                val srcX = ((baseX + col) * sx).toInt().coerceIn(0, frame.width - 1)
+                val c = frame.getPixel(srcX, srcY)
                 val r = (c shr 16) and 0xFF
                 val g = (c shr 8) and 0xFF
                 val b = c and 0xFF
@@ -152,7 +149,8 @@ object ComboFrameReader {
     }
 
     /**
-     * Match patch against templates with ±1px shifts. Returns (bestIndex, bestDist).
+     * 本家 best_match 準拠: ±1px の各シフトごとにその窓で二値化し、
+     * 全テンプレートとの不一致率を計算して最小を返す。
      */
     private fun bestMatch(
         patch: IntArray,
@@ -161,32 +159,41 @@ object ComboFrameReader {
         templates: List<ComboTemplates.Template>
     ): Pair<Int, Double> {
         val pw = tw + 2
-        val ph = th + 2
-        if (patch.size != pw * ph) return -1 to 1.0
-
-        // binarize patch using its own contrast
-        val lo = patch.minOrNull()?.toFloat() ?: 0f
-        val hi = patch.maxOrNull()?.toFloat() ?: 0f
-        if (hi - lo < MIN_CONTRAST) return -1 to 1.0
-        val thr = (lo + hi) / 2f
-        val bits = BooleanArray(patch.size) { patch[it] > thr }
+        if (patch.size != pw * (th + 2)) return -1 to 1.0
 
         var bestIdx = -1
-        var bestDist = Double.MAX_VALUE
-        for ((ti, tpl) in templates.withIndex()) {
-            if (tpl.w != tw || tpl.h != th) continue
-            for (dy in 0..2) {
-                for (dx in 0..2) {
-                    var mismatch = 0
-                    val total = tw * th
-                    for (row in 0 until th) {
-                        for (col in 0 until tw) {
-                            val pi = (row + dy) * pw + (col + dx)
-                            val ti2 = row * tw + col
-                            if (bits[pi] != tpl.bits[ti2]) mismatch++
-                        }
+        var bestDist = 1.0
+        val total = (tw * th).toDouble()
+        val buf = BooleanArray(tw * th)
+
+        for (dy in 0..2) {
+            for (dx in 0..2) {
+                // このシフト窓の明暗で二値化 (本家 Patch::binarize)
+                var lo = 255
+                var hi = 0
+                for (row in 0 until th) {
+                    val base = (dy + row) * pw + dx
+                    for (col in 0 until tw) {
+                        val v = patch[base + col]
+                        if (v < lo) lo = v
+                        if (v > hi) hi = v
                     }
-                    val dist = mismatch.toDouble() / total
+                }
+                if (hi - lo < MIN_CONTRAST) continue
+                val thr = (lo + hi) / 2f
+                for (row in 0 until th) {
+                    val base = (dy + row) * pw + dx
+                    for (col in 0 until tw) {
+                        buf[row * tw + col] = patch[base + col] > thr
+                    }
+                }
+                for ((ti, tpl) in templates.withIndex()) {
+                    if (tpl.w != tw || tpl.h != th) continue
+                    var mismatch = 0
+                    for (i in 0 until tw * th) {
+                        if (buf[i] != tpl.bits[i]) mismatch++
+                    }
+                    val dist = mismatch / total
                     if (dist < bestDist) {
                         bestDist = dist
                         bestIdx = ti
