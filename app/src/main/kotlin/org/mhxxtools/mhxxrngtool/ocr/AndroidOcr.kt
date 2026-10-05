@@ -41,6 +41,7 @@ object AndroidOcr {
 
     // ── Bitmap の指定領域を切り抜いて OCR する ────────────────────────────
     // cropLeft/Top/Right/Bottom は 0.0〜1.0 の相対座標
+    // 小さい日本語UI文字の認識率向上のため、切り出し後に2倍に拡大してから OCR する
     suspend fun recognizeCropped(
         bitmap: Bitmap,
         cropLeft: Float, cropTop: Float,
@@ -53,7 +54,12 @@ object AndroidOcr {
             val rw = ((cropRight  - cropLeft)  * w).toInt().coerceIn(1, w - x)
             val rh = ((cropBottom - cropTop)   * h).toInt().coerceIn(1, h - y)
             val crop = Bitmap.createBitmap(bitmap, x, y, rw, rh)
-            recognizeBitmap(crop)
+            // 2x upscale (ML Kit は小さい文字に弱いため)
+            val scaled = Bitmap.createScaledBitmap(crop, rw * 2, rh * 2, true)
+            if (scaled !== crop) crop.recycle()
+            val text = recognizeBitmap(scaled)
+            scaled.recycle()
+            text
         }
     }
 

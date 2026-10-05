@@ -282,72 +282,49 @@ class MHXXEngine(kind: Int = 0) {
     // ── 調合列検索 ─────────────────────────────────────────────────────────
 
     /**
-     * 調合列検索（notebook search_combo 準拠）
+     * 調合列検索（notebook search_combo 完全準拠）
      *
-     * - 先頭3件・末尾99をカットして差分列 (2/3/4) を作る
-     * - stride=5 で KMP 検索
-     * - ヒット位置の補正:
-     *     j = i - 5*3 - 15 + 2*(len(raw)-1)
-     *   （カットした3回分 + 初回遅延15 + 各調合の進行2）
+     * notebook と同じ処理:
+     * 1. jump(start) → descend ×7
+     * 2. raw_A の先頭3件・末尾99をカット → pos_A
+     * 3. dif_A = 隣接差分。2/3/4 以外が1つでもあれば検索しない
+     * 4. stride=5 で KMP 検索 (lut: <25→2, <75→3, else→4)
+     * 5. ヒット補正:
+     *      j = i - 5*3 - 15 + 2*(len(raw_A)-1)
+     *    （カットした3回分 + 初回遅延15 + 各調合の進行2）
      */
     fun searchCombo(
         start: Long, step: Long, comboPositions: List<Int>,
         shouldStop: () -> Boolean = { false },
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Sequence<FrameResult> = sequence {
-        var pos = comboPositions.drop(3).toMutableList()
-        if (pos.isNotEmpty() && pos.last() == 99) pos.removeAt(pos.lastIndex)
-        if (pos.size <= 1) return@sequence
-        val fullDif = pos.zipWithNext { a, b -> b - a }
-        if (fullDif.any { it !in 2..4 }) return@sequence
+        // notebook: raw_A = list(map(int, combo_str.split()))
+        val rawA = comboPositions
+        // 先頭の3つ、末尾の99をカット
+        var posA = rawA.drop(3)
+        if (posA.isNotEmpty() && posA.last() == 99) {
+            posA = posA.dropLast(1)
+        }
+        if (posA.size <= 1) return@sequence
+
+        val difA = posA.zipWithNext { a, b -> b - a }
+        // notebook: show_invalid_differences → 不正差分があれば検索中止
+        if (difA.any { it !in 2..4 }) return@sequence
 
         val lut = comboLookupTable()
+        val se = MHXXEngine(this@MHXXEngine.kind)
+        se.jump(start)
+        repeat(7) { se.descend() }
 
-        // 完全一致 → だめなら末尾寄り短いパターンで再試行（OCR途中誤読に耐性）
-        val candidates = mutableListOf<List<Int>>()
-        candidates.add(fullDif)
-        // 末尾 20 / 15 / 12 件の増分（十分な長さのみ）
-        for (takeN in listOf(20, 15, 12)) {
-            if (fullDif.size > takeN + 2) {
-                candidates.add(fullDif.takeLast(takeN))
-            }
-        }
-
-        val seenFrames = mutableSetOf<Long>()
         var emitted = 0L
-
-        for (dif in candidates) {
-            if (shouldStop()) return@sequence
-            val se = MHXXEngine(this@MHXXEngine.kind)
-            se.jump(start)
-            repeat(7) { se.descend() }
-
-            // このパターンがカバーする「生データ上の調合回数」
-            // fullDif 使用時: rawLen = comboPositions.size
-            // 短縮時: 末尾 takeN 件の増分 → 対応する生位置数 = takeN+1 + 先頭3
-            val coveredRawLen = if (dif.size == fullDif.size) {
-                comboPositions.size
-            } else {
-                // pos の末尾 (dif.size+1) 件 + カットした先頭3
-                dif.size + 1 + 3
+        searchStride(se, step, difA, 5, lut, shouldStop).forEach { hitI ->
+            // notebook: j = i - 5 * 3 - 15 + 2 * (len(raw_A) - 1)
+            val resultFrame = start + hitI - 5L * 3L - 15L + 2L * (rawA.size - 1L)
+            if (resultFrame >= 0) {
+                yield(FrameResult(resultFrame, watch(resultFrame)))
+                emitted++
+                onProgress(emitted, emitted)
             }
-
-            val hits = mutableListOf<Long>()
-            searchStride(se, step, dif, 5, lut, shouldStop).forEach { hits.add(it) }
-
-            for (hitI in hits) {
-                // notebook: j = i - 5*3 - 15 + 2*(len(raw_A)-1)
-                val resultFrame = start + hitI - 5L * 3L - 15L + 2L * (coveredRawLen - 1L)
-                if (resultFrame >= 0 && seenFrames.add(resultFrame)) {
-                    yield(FrameResult(resultFrame, watch(resultFrame)))
-                    emitted++
-                    onProgress(emitted, hits.size.toLong().coerceAtLeast(1L))
-                }
-            }
-            // 完全一致で1件以上見つかれば十分
-            if (dif.size == fullDif.size && emitted > 0) break
-            // 短縮で見つかっても続行せず返す（最初にヒットした長さを優先）
-            if (emitted > 0) break
         }
     }
 

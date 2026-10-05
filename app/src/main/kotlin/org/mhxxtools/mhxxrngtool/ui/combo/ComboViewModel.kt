@@ -61,9 +61,10 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         if (values.size < 5) return "⚠ 数値列が短すぎます（5件以上推奨）" to false
         val (dif, invalid) = MHXXEngine.parseComboSequence(values)
         if (dif.isEmpty()) return "⚠ 数値列が短すぎます (先頭3件を除いた後に2件以上必要です)" to false
+        // notebook 準拠: 増分が 2/3/4 以外なら検索しない
         if (invalid.isNotEmpty()) {
             val marked = dif.mapIndexed { i, d -> if (i in invalid) "[$d]" else "$d" }.joinToString(" ")
-            return "⚠ 一部増分が2/3/4外: $marked\n→ 有効区間で検索します" to true
+            return "⚠ 不正な増分があります (2/3/4以外): $marked\n→ 本家同様、検索できません" to false
         }
         return "✓ 増分列 (${dif.size}件): ${dif.joinToString(" ")}" to true
     }
