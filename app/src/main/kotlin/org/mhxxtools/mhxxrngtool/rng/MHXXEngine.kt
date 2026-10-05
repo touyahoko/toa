@@ -66,7 +66,11 @@ class MHXXEngine(kind: Int = 0) {
         ascend()
     }
 
-    fun jump(frame: Long) {
+    /**
+     * 多項式 jump のみ（7 roll なし）。
+     * mhxx-combo-scan の rng::jump と同じ。調合検索で使う。
+     */
+    fun jumpPure(frame: Long) {
         initState()
         val exp = BigInteger.valueOf(frame).mod(BI_2_128_MINUS_1)
         var rPoly = polyPowMod(BigInteger.TWO, exp, JUMP_MODULUS_BI)
@@ -80,6 +84,14 @@ class MHXXEngine(kind: Int = 0) {
         }
         x = sX; y = sY; z = sZ; w = sW
         f = frame
+    }
+
+    /**
+     * notebook / お守り検索用 jump。
+     * 多項式 jump のあと roll×7（7フレーム履歴を埋める）。
+     */
+    fun jump(frame: Long) {
+        jumpPure(frame)
         repeat(7) { roll() }
     }
 
@@ -282,44 +294,47 @@ class MHXXEngine(kind: Int = 0) {
     // ── 調合列検索 ─────────────────────────────────────────────────────────
 
     /**
-     * 調合列検索（notebook search_combo 完全準拠）
+     * 調合列検索（mhxx-combo-scan Searcher 完全準拠）
      *
-     * notebook と同じ処理:
-     * 1. jump(start) → descend ×7
-     * 2. raw_A の先頭3件・末尾99をカット → pos_A
-     * 3. dif_A = 隣接差分。2/3/4 以外が1つでもあれば検索しない
-     * 4. stride=5 で KMP 検索 (lut: <25→2, <75→3, else→4)
-     * 5. ヒット補正:
-     *      j = i - 5*3 - 15 + 2*(len(raw_A)-1)
-     *    （カットした3回分 + 初回遅延15 + 各調合の進行2）
+     * combo-core/src/search.rs と同じ処理:
+     * 1. jumpPure(start)  … 7roll なしの純粋 jump
+     * 2. 先頭3件・末尾99をカット → 隣接差分 (2/3/4 以外は検索中止)
+     * 3. stride=5 で KMP 検索
+     *    生産数: (w & 0xFFFF) % 100 → 0..24=2, 25..74=3, 75..99=4
+     * 4. ヒット補正 (Searcher::offset + consumed - STRIDE*(n-1)):
+     *      frame = start - STRIDE*3 - 15 + 2*(rawLen-1) + consumed - STRIDE*(n-1)
+     *    ここで searchStride が返す hitI = consumed - STRIDE*(n-1)
+     *    よって frame = start + hitI - 15 - 15 + 2*(rawLen-1)
      */
     fun searchCombo(
         start: Long, step: Long, comboPositions: List<Int>,
         shouldStop: () -> Boolean = { false },
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Sequence<FrameResult> = sequence {
-        // notebook: raw_A = list(map(int, combo_str.split()))
-        val rawA = comboPositions
-        // 先頭の3つ、末尾の99をカット
-        var posA = rawA.drop(3)
-        if (posA.isNotEmpty() && posA.last() == 99) {
-            posA = posA.dropLast(1)
+        val rawLen = comboPositions.size
+        // pattern_from: 先頭3つカット、末尾99カット
+        var pos = comboPositions.drop(3)
+        if (pos.isNotEmpty() && pos.last() == 99) {
+            pos = pos.dropLast(1)
         }
-        if (posA.size <= 1) return@sequence
+        if (pos.size <= 1) return@sequence
 
-        val difA = posA.zipWithNext { a, b -> b - a }
-        // notebook: show_invalid_differences → 不正差分があれば検索中止
-        if (difA.any { it !in 2..4 }) return@sequence
+        val dif = pos.zipWithNext { a, b -> b - a }
+        // InvalidDifference → 検索しない
+        if (dif.any { it !in 2..4 }) return@sequence
 
         val lut = comboLookupTable()
+        // mhxx-combo-scan: state = jump(start_frame)  … pure, no 7-roll
         val se = MHXXEngine(this@MHXXEngine.kind)
-        se.jump(start)
-        repeat(7) { se.descend() }
+        se.jumpPure(start)
 
+        // offset = start - STRIDE*3 - 15 + 2*(raw_len - 1)
+        // hitI from searchStride = consumed - STRIDE*(n-1)
+        // result = offset + hitI  (but hitI already relative; add start once)
+        val stride = 5L
         var emitted = 0L
-        searchStride(se, step, difA, 5, lut, shouldStop).forEach { hitI ->
-            // notebook: j = i - 5 * 3 - 15 + 2 * (len(raw_A) - 1)
-            val resultFrame = start + hitI - 5L * 3L - 15L + 2L * (rawA.size - 1L)
+        searchStride(se, step, dif, 5, lut, shouldStop).forEach { hitI ->
+            val resultFrame = start + hitI - stride * 3L - 15L + 2L * (rawLen - 1L)
             if (resultFrame >= 0) {
                 yield(FrameResult(resultFrame, watch(resultFrame)))
                 emitted++
