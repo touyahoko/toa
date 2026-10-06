@@ -134,7 +134,7 @@ fun ComboScreen(
                     ) {
                         Text("📹 動画解析でフレーム特定", fontWeight = FontWeight.Bold)
                         Text(
-                            "Switch 30秒録画 (1920×1080) から調合カウンターを自動読み取りして\n" +
+                            "Switch録画 (1280×720・30fps 推奨) から調合カウンターを自動読み取りして\n" +
                             "調合数値列に適用します。",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSecondaryContainer

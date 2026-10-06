@@ -1,13 +1,17 @@
 package org.mhxxtools.mhxxrngtool.ui.combo
 
 import android.graphics.Bitmap
-import kotlin.math.abs
+import android.graphics.Canvas
+import android.graphics.Rect as AndroidRect
 import kotlin.math.max
-import kotlin.math.min
 
 /**
- * mhxx-combo-scan の read.rs を Kotlin 移植。
- * 1280×720 前提でテンプレート照合により素材/完成品の個数を読む。
+ * mhxx-combo-scan combo-core/src/read.rs の完全移植。
+ *
+ * 本家同様:
+ * - 前提解像度 1280×720 (他解像度はここに正規化してから読む)
+ * - ROI (513,49,321,221) だけを切り出してテンプレート照合
+ * - ±1px シフトごとに窓を二値化して最良一致を取る
  */
 object ComboFrameReader {
 
@@ -15,7 +19,6 @@ object ComboFrameReader {
     const val SOURCE_W = 1280
     const val SOURCE_H = 720
 
-    // ROI that covers header + material slots + product (from read.rs)
     val ROI_X = 513
     val ROI_Y = 49
     val ROI_W = 321
@@ -55,28 +58,36 @@ object ComboFrameReader {
     )
 
     /**
-     * Full-frame Bitmap (ideally 1280×720) → FrameReading.
-     * Scales coordinates if resolution differs.
+     * 任意解像度の Bitmap を受け取り、1280×720 に正規化してから読む。
+     * 呼び出し側で frame を recycle すること (正規化コピーは内部で解放)。
      */
     fun readFrame(t: Double, frame: Bitmap): FrameReading {
-        val sx = frame.width.toFloat() / SOURCE_W
-        val sy = frame.height.toFloat() / SOURCE_H
-        if (!isCrafting(frame, sx, sy)) {
+        val normalized = normalizeToSource(frame)
+        val owned = normalized !== frame
+        return try {
+            readNormalized(t, normalized)
+        } finally {
+            if (owned) normalized.recycle()
+        }
+    }
+
+    private fun readNormalized(t: Double, frame: Bitmap): FrameReading {
+        val roi = extractRoiBrightness(frame)
+        if (!isCrafting(roi)) {
             return FrameReading.notCrafting(t)
         }
-        val product = readNumber(frame, PROD_SLOTS, sx, sy)
+        val product = readNumber(roi, PROD_SLOTS)
         return FrameReading(
             t = t,
             crafting = true,
-            material1 = readNumber(frame, MAT_SLOTS[0], sx, sy),
-            material2 = readNumber(frame, MAT_SLOTS[1], sx, sy),
+            material1 = readNumber(roi, MAT_SLOTS[0]),
+            material2 = readNumber(roi, MAT_SLOTS[1]),
             product = product,
             done = false
         )
     }
 
     fun reachedCap(product: Int?, seenBelow: BooleanArray): Boolean {
-        // seenBelow is a 1-element holder
         return when {
             product == null -> false
             product < CAP -> {
@@ -87,71 +98,89 @@ object ComboFrameReader {
         }
     }
 
-    private fun isCrafting(frame: Bitmap, sx: Float, sy: Float): Boolean {
+    private fun normalizeToSource(frame: Bitmap): Bitmap {
+        if (frame.width == SOURCE_W && frame.height == SOURCE_H) return frame
+        val out = Bitmap.createBitmap(SOURCE_W, SOURCE_H, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawBitmap(
+            frame,
+            AndroidRect(0, 0, frame.width, frame.height),
+            AndroidRect(0, 0, SOURCE_W, SOURCE_H),
+            null
+        )
+        return out
+    }
+
+    private fun extractRoiBrightness(frame: Bitmap): IntArray {
+        val w = ROI_W
+        val h = ROI_H
+        val pixels = IntArray(w * h)
+        val x = ROI_X.coerceIn(0, frame.width - w)
+        val y = ROI_Y.coerceIn(0, frame.height - h)
+        frame.getPixels(pixels, 0, w, x, y, w, h)
+        val out = IntArray(w * h)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val r = (c shr 16) and 0xFF
+            val g = (c shr 8) and 0xFF
+            val b = c and 0xFF
+            out[i] = max(r, max(g, b))
+        }
+        return out
+    }
+
+    private fun extractPatchFromRoi(roi: IntArray, rect: Rect): IntArray {
+        val pad = 1
+        val w = rect.width + 2 * pad
+        val h = rect.height + 2 * pad
+        val out = IntArray(w * h)
+        val ox = rect.x - ROI_X - pad
+        val oy = rect.y - ROI_Y - pad
+        for (row in 0 until h) {
+            val sy = (oy + row).coerceIn(0, ROI_H - 1)
+            for (col in 0 until w) {
+                val sx = (ox + col).coerceIn(0, ROI_W - 1)
+                out[row * w + col] = roi[sy * ROI_W + sx]
+            }
+        }
+        return out
+    }
+
+    private fun isCrafting(roi: IntArray): Boolean {
         val pairs = listOf(
             HEADER_RECT to ComboTemplates.HEADER,
             SLASH_RECT to ComboTemplates.SLASH
         )
         for ((rect, tpl) in pairs) {
-            val patch = extractPatch(frame, rect, sx, sy)
+            val patch = extractPatchFromRoi(roi, rect)
             val (_, dist) = bestMatch(patch, rect.width, rect.height, listOf(tpl))
             if (dist > MAX_DIST_MARK) return false
         }
         return true
     }
 
-    private fun readNumber(
-        frame: Bitmap,
-        slots: Array<Rect>,
-        sx: Float,
-        sy: Float
-    ): Int? {
+    private fun readNumber(roi: IntArray, slots: Array<Rect>): Int? {
         if (slots.size < 2) return null
         fun isBlank(patch: IntArray): Boolean {
             val lo = patch.minOrNull() ?: 0
             val hi = patch.maxOrNull() ?: 0
             return hi - lo < MIN_CONTRAST
         }
-        val tensPatch = extractPatch(frame, slots[0], sx, sy)
-        val onesPatch = extractPatch(frame, slots[1], sx, sy)
+        val tensPatch = extractPatchFromRoi(roi, slots[0])
+        val onesPatch = extractPatchFromRoi(roi, slots[1])
         if (isBlank(onesPatch)) return null
-        val (onesIdx, onesDist) = bestMatch(onesPatch, slots[1].width, slots[1].height, ComboTemplates.DIGITS.toList())
+        val (onesIdx, onesDist) = bestMatch(
+            onesPatch, slots[1].width, slots[1].height, ComboTemplates.DIGITS.toList()
+        )
         if (onesDist > MAX_DIST || onesIdx < 0) return null
         if (isBlank(tensPatch)) return onesIdx
-        val (tensIdx, tensDist) = bestMatch(tensPatch, slots[0].width, slots[0].height, ComboTemplates.DIGITS.toList())
+        val (tensIdx, tensDist) = bestMatch(
+            tensPatch, slots[0].width, slots[0].height, ComboTemplates.DIGITS.toList()
+        )
         if (tensDist > MAX_DIST || tensIdx < 0) return null
         return tensIdx * 10 + onesIdx
     }
 
-    /**
-     * 本家 Patch::new 準拠: rect ±1px の明るさ (max R,G,B)。
-     * 1280×720 座標系の各ピクセルを sx/sy で実フレームに最近傍マッピング。
-     */
-    private fun extractPatch(frame: Bitmap, rect: Rect, sx: Float, sy: Float): IntArray {
-        val pad = 1
-        val w = rect.width + 2 * pad
-        val h = rect.height + 2 * pad
-        val out = IntArray(w * h)
-        val baseX = rect.x - pad
-        val baseY = rect.y - pad
-        for (row in 0 until h) {
-            val srcY = ((baseY + row) * sy).toInt().coerceIn(0, frame.height - 1)
-            for (col in 0 until w) {
-                val srcX = ((baseX + col) * sx).toInt().coerceIn(0, frame.width - 1)
-                val c = frame.getPixel(srcX, srcY)
-                val r = (c shr 16) and 0xFF
-                val g = (c shr 8) and 0xFF
-                val b = c and 0xFF
-                out[row * w + col] = max(r, max(g, b))
-            }
-        }
-        return out
-    }
-
-    /**
-     * 本家 best_match 準拠: ±1px の各シフトごとにその窓で二値化し、
-     * 全テンプレートとの不一致率を計算して最小を返す。
-     */
     private fun bestMatch(
         patch: IntArray,
         tw: Int,
@@ -168,7 +197,6 @@ object ComboFrameReader {
 
         for (dy in 0..2) {
             for (dx in 0..2) {
-                // このシフト窓の明暗で二値化 (本家 Patch::binarize)
                 var lo = 255
                 var hi = 0
                 for (row in 0 until th) {
