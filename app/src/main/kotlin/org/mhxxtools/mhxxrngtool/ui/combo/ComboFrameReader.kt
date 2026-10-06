@@ -233,10 +233,6 @@ object ComboFrameReader {
                 }
             }
         }
-        // 1位と2位が近すぎる (7と8など) ときは不確実として棄却
-        if (bestIdx >= 0 && secondDist - bestDist < 0.02 && bestDist > 0.05) {
-            return -1 to 1.0
-        }
         return bestIdx to bestDist
     }
 }

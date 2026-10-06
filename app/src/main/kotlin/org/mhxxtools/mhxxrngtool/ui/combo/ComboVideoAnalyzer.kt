@@ -75,10 +75,6 @@ object ComboVideoAnalyzer {
                 val total = indices.size
                 val readings = mutableListOf<ComboFrameReader.FrameReading>()
                 val seenBelow = booleanArrayOf(false)
-                // 完成品の瞬間誤読を抑える: 同じ値が2コマ続くか、前回比 +2〜4 なら採用
-                var stableProduct: Int? = null
-                var pendingProduct: Int? = null
-                var pendingCount = 0
 
                 for ((i, frameIdx) in indices.withIndex()) {
                     coroutineContext.ensureActive()
@@ -89,37 +85,7 @@ object ComboVideoAnalyzer {
                     } else {
                         try {
                             val t = frameIdx.toDouble() / fps
-                            var reading = ComboFrameReader.readFrame(t, bmp)
-                            if (reading.crafting && reading.product != null) {
-                                val p = reading.product
-                                val sp = stableProduct
-                                val accepted = when {
-                                    sp == null -> true
-                                    p == sp -> true
-                                    p > sp && (p - sp) in 2..4 -> true
-                                    p > sp && (p - sp) > 4 -> {
-                                        // 大きな飛びは2コマ連続で確認
-                                        if (pendingProduct == p) {
-                                            pendingCount++
-                                            pendingCount >= 2
-                                        } else {
-                                            pendingProduct = p
-                                            pendingCount = 1
-                                            false
-                                        }
-                                    }
-                                    p < sp -> false // 減少は無視
-                                    else -> false
-                                }
-                                if (accepted) {
-                                    stableProduct = p
-                                    pendingProduct = null
-                                    pendingCount = 0
-                                } else {
-                                    // 不安定な読みは前回の安定値で置き換え
-                                    reading = reading.copy(product = sp)
-                                }
-                            }
+                            val reading = ComboFrameReader.readFrame(t, bmp)
                             if (reading.crafting) {
                                 val done = ComboFrameReader.reachedCap(reading.product, seenBelow)
                                 readings.add(if (done) reading.copy(done = true) else reading)
@@ -128,10 +94,6 @@ object ComboVideoAnalyzer {
                                     break
                                 }
                             } else {
-                                // 調合画面を外れたら安定値リセット
-                                stableProduct = null
-                                pendingProduct = null
-                                pendingCount = 0
                                 readings.add(reading)
                             }
                         } finally {

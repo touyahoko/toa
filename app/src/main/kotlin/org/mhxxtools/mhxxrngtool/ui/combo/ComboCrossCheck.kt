@@ -43,7 +43,8 @@ object ComboCrossCheck {
     private data class Seg(
         val material: Int,
         val t: Double,
-        val lastProduct: Int?
+        val lastProduct: Int?,
+        val productVotes: Map<Int, Int> = emptyMap()
     )
 
     /**
@@ -168,9 +169,15 @@ object ComboCrossCheck {
             if (r.product != null) {
                 val last = segs.last()
                 val prevP = last.lastProduct
-                // 完成品は調合中に減らない。減った読みは誤読として無視
-                if (prevP == null || r.product >= prevP) {
-                    segs[segs.lastIndex] = last.copy(lastProduct = r.product)
+                // 完成品は減らない。減った読みは誤読
+                if (prevP != null && r.product < prevP) {
+                    // ignore
+                } else {
+                    val votes = last.productVotes.toMutableMap()
+                    votes[r.product] = (votes[r.product] ?: 0) + 1
+                    // 区間内の最多票。同票なら大きい値 (08 が 07 に負けるのを防ぐ)
+                    val chosen = votes.entries.maxWith(compareBy({ it.value }, { it.key })).key
+                    segs[segs.lastIndex] = last.copy(lastProduct = chosen, productVotes = votes)
                 }
             }
             prevM = m
