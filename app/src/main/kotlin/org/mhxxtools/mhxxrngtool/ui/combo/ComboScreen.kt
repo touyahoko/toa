@@ -200,7 +200,7 @@ fun ComboScreen(
                             )
                         }
                         Text(
-                            "間隔: 何フレームおきに読むか (テンプレート照合は 1 推奨)",
+                            "間隔: 何フレームおきに読むか (2=高速 / 1=高精度)",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
                         )

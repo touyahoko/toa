@@ -252,4 +252,49 @@ object ComboCrossCheck {
         if (cumulative.isEmpty() || cumulative.any { it == null }) return null
         return cumulative.map { it!! }
     }
+
+    /**
+     * 曖昧・失敗区間を候補の先頭パターンで補完して確定列を作る。
+     * 動画読み取りの1区間だけ曖昧なときに、検索不能になるのを防ぐ。
+     */
+    fun toSearchSequenceRelaxed(analysis: Analysis): List<Int>? {
+        if (analysis.crafts.isEmpty()) return null
+        val out = mutableListOf(analysis.crafts.first().before)
+        for (c in analysis.crafts) {
+            val yields: List<Int>? = when (val r = c.resolution) {
+                is Resolution.Exact -> r.yields
+                is Resolution.Inferred -> r.yields
+                is Resolution.Capped -> r.yields
+                is Resolution.Ambiguous -> r.candidates.firstOrNull()
+                Resolution.Failed -> {
+                    // 1回だけなら gain をそのまま使う
+                    if (c.count == 1 && c.gain in YIELD_MIN..YIELD_MAX) listOf(c.gain) else null
+                }
+            }
+            if (yields == null) {
+                // 途中が分からないので after だけ足して次へ
+                repeat(c.count - 1) { /* skip unknown intermediate */ }
+                out.add(c.after)
+            } else {
+                var v = out.last()
+                for (y in yields) {
+                    v = (v + y).coerceAtMost(CAP)
+                    out.add(v)
+                }
+                // after と食い違う場合は after に揃える
+                if (out.last() != c.after && c.after <= CAP) {
+                    out[out.lastIndex] = c.after
+                }
+            }
+        }
+        // 増分が 2〜4 以外の隣接があれば無効
+        for (i in 0 until out.size - 1) {
+            val d = out[i + 1] - out[i]
+            if (d !in YIELD_MIN..YIELD_MAX && out[i + 1] != CAP && out[i] != CAP) {
+                // CAP 到達付近以外で不正なら全体を捨てる
+                if (out[i + 1] < CAP) return null
+            }
+        }
+        return out
+    }
 }

@@ -14,11 +14,10 @@ import kotlin.coroutines.coroutineContext
 /**
  * mhxx-combo-scan 準拠の動画解析。
  *
- * 速度・精度のポイント (本家 Web 版に合わせる):
- * - フレームを 1280×720 に正規化してから ROI だけ読む
- * - 全フレーム (frameStep=1) を読む (素材変化を取りこぼさない)
- * - 完成品が上限に達したら打ち切り
- * - getScaledFrameAtTime (API 27+) で縮小取得して高速化
+ * - 1280×720 に縮小取得 (API 27+)
+ * - ROI テンプレート照合
+ * - 完成品上限で打ち切り
+ * - 曖昧区間は候補で補完して数列を返す
  */
 object ComboVideoAnalyzer {
 
@@ -52,9 +51,6 @@ object ComboVideoAnalyzer {
         }
     }
 
-    /**
-     * @param frameStep 本家は全フレーム。1 推奨。2〜3 でも素材変化は数フレーム続くので可。
-     */
     suspend fun analyze(
         context: Context,
         uri: Uri,
@@ -80,11 +76,9 @@ object ComboVideoAnalyzer {
                 val readings = mutableListOf<ComboFrameReader.FrameReading>()
                 val seenBelow = booleanArrayOf(false)
 
-                // 時間順にシーク (近い時刻ほどデコードが速い)
                 for ((i, frameIdx) in indices.withIndex()) {
                     coroutineContext.ensureActive()
                     val timeUs = (frameIdx * 1_000_000L / fps).coerceAtMost(durationMs * 1000)
-
                     val bmp = getFrame(retriever, timeUs)
                     if (bmp == null) {
                         onProgress(i + 1, total)
@@ -111,6 +105,7 @@ object ComboVideoAnalyzer {
 
                 val analysis = ComboCrossCheck.analyze(readings)
                 val seq = ComboCrossCheck.toSearchSequence(analysis.cumulative)
+                    ?: ComboCrossCheck.toSearchSequenceRelaxed(analysis)
 
                 if (seq == null && analysis.crafts.isEmpty()) {
                     error(
@@ -122,14 +117,19 @@ object ComboVideoAnalyzer {
                 }
 
                 val finalSeq = seq ?: emptyList()
-                val extraIssues = if (seq == null && analysis.cumulative.isNotEmpty()) {
-                    listOf(
-                        "途中に不明な増分があります (曖昧な区間 ${analysis.crafts.count {
-                            it.resolution is ComboCrossCheck.Resolution.Ambiguous ||
-                                it.resolution is ComboCrossCheck.Resolution.Failed
-                        }} 件)。動画を最初から撮るか、数値列を手入力してください。"
+                val ambiguousCount = analysis.crafts.count {
+                    it.resolution is ComboCrossCheck.Resolution.Ambiguous ||
+                        it.resolution is ComboCrossCheck.Resolution.Failed
+                }
+                val extraIssues = mutableListOf<String>()
+                if (ambiguousCount > 0 && finalSeq.isNotEmpty()) {
+                    extraIssues.add(
+                        "曖昧な区間 ${ambiguousCount} 件を候補から補完しました。" +
+                            "結果がずれる場合は数値列を手修正してください。"
                     )
-                } else emptyList()
+                } else if (finalSeq.isEmpty() && analysis.cumulative.isNotEmpty()) {
+                    extraIssues.add("途中に不明な増分があります。数値列を手入力してください。")
+                }
 
                 AnalyzeResult(
                     cumulative = finalSeq,
@@ -146,13 +146,10 @@ object ComboVideoAnalyzer {
         }
     }
 
-    /**
-     * API 27+ は getScaledFrameAtTime で 1280×720 に直接縮小取得 (高速・本家と同解像度)。
-     * それ未満は getFrameAtTime。
-     */
     private fun getFrame(retriever: MediaMetadataRetriever, timeUs: Long): Bitmap? {
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                // CLOSEST_SYNC はキーフレームのみで速いが数字がずれるので CLOSEST を使う
                 retriever.getScaledFrameAtTime(
                     timeUs,
                     MediaMetadataRetriever.OPTION_CLOSEST,
