@@ -240,7 +240,24 @@ object ComboCrossCheck {
             ai = bi
         }
         if (ai != segs.lastIndex) {
-            issues.add("最後の完成品増加が読めていません")
+            // 完成品の表示が素材より遅れ、99 のコマを取り逃したとき。
+            // 残りの素材減少が 2〜4 個分で上限に届くなら 99 として確定する。
+            val last = segs.last()
+            val prev = segs.getOrNull(ai)
+            val before = prev?.lastProduct
+            val remain = if (prev != null) prev.material - last.material else 0
+            val gain = if (before != null) CAP - before else -1
+            if (before != null && remain in 1..3 && gain in YIELD_MIN..YIELD_MAX * remain) {
+                val sp = splits(gain, remain)
+                if (sp.size == 1) {
+                    crafts.add(Craft(last.t, remain, gain, before, CAP, Resolution.Capped(sp[0])))
+                    issues.add("最後の完成品は上限 99 として補完しました")
+                } else {
+                    issues.add("最後の完成品増加が読めていません")
+                }
+            } else {
+                issues.add("最後の完成品増加が読めていません")
+            }
         }
 
         val cumulative: List<Int?> = if (crafts.isEmpty()) emptyList()
