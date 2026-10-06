@@ -85,27 +85,28 @@ object ComboVideoAnalyzer {
                     coroutineContext.ensureActive()
                     val timeUs = (frameIdx * 1_000_000L / fps).coerceAtMost(durationMs * 1000)
 
-                    val bmp = getFrame(retriever, timeUs) ?: run {
+                    val bmp = getFrame(retriever, timeUs)
+                    if (bmp == null) {
                         onProgress(i + 1, total)
-                        continue
-                    }
-                    try {
-                        val t = frameIdx.toDouble() / fps
-                        val reading = ComboFrameReader.readFrame(t, bmp)
-                        if (reading.crafting) {
-                            val done = ComboFrameReader.reachedCap(reading.product, seenBelow)
-                            readings.add(if (done) reading.copy(done = true) else reading)
-                            if (done) {
-                                onProgress(total, total)
-                                break
+                    } else {
+                        try {
+                            val t = frameIdx.toDouble() / fps
+                            val reading = ComboFrameReader.readFrame(t, bmp)
+                            if (reading.crafting) {
+                                val done = ComboFrameReader.reachedCap(reading.product, seenBelow)
+                                readings.add(if (done) reading.copy(done = true) else reading)
+                                if (done) {
+                                    onProgress(total, total)
+                                    break
+                                }
+                            } else {
+                                readings.add(reading)
                             }
-                        } else {
-                            readings.add(reading)
+                        } finally {
+                            bmp.recycle()
                         }
-                    } finally {
-                        bmp.recycle()
+                        onProgress(i + 1, total)
                     }
-                    onProgress(i + 1, total)
                 }
 
                 val analysis = ComboCrossCheck.analyze(readings)
