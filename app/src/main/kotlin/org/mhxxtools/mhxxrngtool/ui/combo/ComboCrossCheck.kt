@@ -247,10 +247,19 @@ object ComboCrossCheck {
     /**
      * 累計列から検索用の確定列を作る。
      * 本家どおり、不明値 (null) が1つでもあれば null を返す (無理につなげない)。
+     * 先頭が 00 のときはその次の値から始める（調合開始直後の 0 は使わない）。
      */
     fun toSearchSequence(cumulative: List<Int?>): List<Int>? {
         if (cumulative.isEmpty() || cumulative.any { it == null }) return null
-        return cumulative.map { it!! }
+        return stripLeadingZero(cumulative.map { it!! })
+    }
+
+    /** 先頭の 00 を除き、その次の調合数から始める */
+    fun stripLeadingZero(seq: List<Int>): List<Int> {
+        if (seq.isEmpty()) return seq
+        var i = 0
+        while (i < seq.size && seq[i] == 0) i++
+        return if (i == 0) seq else seq.drop(i)
     }
 
     /**
@@ -295,6 +304,6 @@ object ComboCrossCheck {
                 if (out[i + 1] < CAP) return null
             }
         }
-        return out
+        return stripLeadingZero(out)
     }
 }
