@@ -216,26 +216,42 @@ object ComboFrameReader {
         return true
     }
 
+    /**
+     * 本家 read_number。
+     * 空白判定はパッチ全体ではなく、ずらさない窓 (dx=1,dy=1) の明暗差だけ。
+     * ここをパッチ全体にすると 0 や一桁の 8 が空白扱いになり、公式テスト 721 枚と不一致になる。
+     */
     private fun readNumber(roi: IntArray, slots: Array<Rect>, dx: Int = 0, dy: Int = 0): Int? {
         if (slots.size < 2) return null
-        fun isBlank(patch: IntArray): Boolean {
-            val lo = patch.minOrNull() ?: 0
-            val hi = patch.maxOrNull() ?: 0
+        fun isBlankSlot(patch: IntArray, w: Int, h: Int): Boolean {
+            val pw = w + 2
+            var lo = 255
+            var hi = 0
+            for (row in 0 until h) {
+                val base = (1 + row) * pw + 1
+                for (col in 0 until w) {
+                    val v = patch[base + col]
+                    if (v < lo) lo = v
+                    if (v > hi) hi = v
+                }
+            }
             return hi - lo < MIN_CONTRAST
         }
         val tensPatch = extractPatchFromRoi(roi, slots[0], dx, dy)
         val onesPatch = extractPatchFromRoi(roi, slots[1], dx, dy)
-        if (isBlank(onesPatch)) return null
-        val (onesIdx, onesDist) = bestMatch(
-            onesPatch, slots[1].width, slots[1].height, ComboTemplates.DIGITS.toList()
-        )
-        if (onesDist > MAX_DIST || onesIdx < 0) return null
-        if (isBlank(tensPatch)) return onesIdx
-        val (tensIdx, tensDist) = bestMatch(
-            tensPatch, slots[0].width, slots[0].height, ComboTemplates.DIGITS.toList()
-        )
+        val digits = ComboTemplates.DIGITS.toList()
+        val ones = if (isBlankSlot(onesPatch, slots[1].width, slots[1].height)) {
+            null
+        } else {
+            val (idx, dist) = bestMatch(onesPatch, slots[1].width, slots[1].height, digits)
+            if (dist > MAX_DIST || idx < 0) return null
+            idx
+        }
+        if (ones == null) return null
+        if (isBlankSlot(tensPatch, slots[0].width, slots[0].height)) return ones
+        val (tensIdx, tensDist) = bestMatch(tensPatch, slots[0].width, slots[0].height, digits)
         if (tensDist > MAX_DIST || tensIdx < 0) return null
-        return tensIdx * 10 + onesIdx
+        return tensIdx * 10 + ones
     }
 
     private fun bestMatch(
