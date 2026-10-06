@@ -72,19 +72,76 @@ object ComboFrameReader {
     }
 
     private fun readNormalized(t: Double, frame: Bitmap): FrameReading {
-        val roi = extractRoiBrightness(frame)
-        if (!isCrafting(roi)) {
+        // 録画の余白・再エンコードで公式座標から数pxずれる。見出しを探してオフセットする。
+        val (dx, dy) = findHeaderOffset(frame)
+        val roi = extractRoiBrightness(frame, dx, dy)
+        if (!isCrafting(roi, dx, dy)) {
             return FrameReading.notCrafting(t)
         }
-        val product = readNumber(roi, PROD_SLOTS)
+        val product = readNumber(roi, PROD_SLOTS, dx, dy)
         return FrameReading(
             t = t,
             crafting = true,
-            material1 = readNumber(roi, MAT_SLOTS[0]),
-            material2 = readNumber(roi, MAT_SLOTS[1]),
+            material1 = readNumber(roi, MAT_SLOTS[0], dx, dy),
+            material2 = readNumber(roi, MAT_SLOTS[1], dx, dy),
             product = product,
             done = false
         )
+    }
+
+    /** 「調合素材」見出しが公式座標からどれだけずれているか。±12px */
+    private fun findHeaderOffset(frame: Bitmap): Pair<Int, Int> {
+        val tpl = ComboTemplates.HEADER
+        var best = 0 to 0
+        var bestDist = 1.0
+        val pad = 1
+        for (dy in -12..12 step 2) {
+            for (dx in -12..12 step 2) {
+                val rect = HEADER_RECT
+                val patch = extractPatchAbs(frame, rect.x + dx, rect.y + dy, rect.width, rect.height)
+                val (_, dist) = bestMatch(patch, rect.width, rect.height, listOf(tpl))
+                if (dist < bestDist) {
+                    bestDist = dist
+                    best = dx to dy
+                }
+            }
+        }
+        if (bestDist > MAX_DIST_MARK) return 0 to 0
+        // 近傍を1px精度で詰め直す
+        val (bx, by) = best
+        var fine = best
+        var fineDist = bestDist
+        for (dy in (by - 2)..(by + 2)) {
+            for (dx in (bx - 2)..(bx + 2)) {
+                val rect = HEADER_RECT
+                val patch = extractPatchAbs(frame, rect.x + dx, rect.y + dy, rect.width, rect.height)
+                val (_, dist) = bestMatch(patch, rect.width, rect.height, listOf(tpl))
+                if (dist < fineDist) {
+                    fineDist = dist
+                    fine = dx to dy
+                }
+            }
+        }
+        return fine
+    }
+
+    private fun extractPatchAbs(frame: Bitmap, x: Int, y: Int, w: Int, h: Int): IntArray {
+        val pad = 1
+        val pw = w + 2 * pad
+        val ph = h + 2 * pad
+        val out = IntArray(pw * ph)
+        for (row in 0 until ph) {
+            val sy = (y - pad + row).coerceIn(0, frame.height - 1)
+            for (col in 0 until pw) {
+                val sx = (x - pad + col).coerceIn(0, frame.width - 1)
+                val c = frame.getPixel(sx, sy)
+                val r = (c shr 16) and 0xFF
+                val g = (c shr 8) and 0xFF
+                val b = c and 0xFF
+                out[row * pw + col] = max(r, max(g, b))
+            }
+        }
+        return out
     }
 
     fun reachedCap(product: Int?, seenBelow: BooleanArray): Boolean {
@@ -111,12 +168,12 @@ object ComboFrameReader {
         return out
     }
 
-    private fun extractRoiBrightness(frame: Bitmap): IntArray {
+    private fun extractRoiBrightness(frame: Bitmap, dx: Int = 0, dy: Int = 0): IntArray {
         val w = ROI_W
         val h = ROI_H
         val pixels = IntArray(w * h)
-        val x = ROI_X.coerceIn(0, frame.width - w)
-        val y = ROI_Y.coerceIn(0, frame.height - h)
+        val x = (ROI_X + dx).coerceIn(0, frame.width - w)
+        val y = (ROI_Y + dy).coerceIn(0, frame.height - h)
         frame.getPixels(pixels, 0, w, x, y, w, h)
         val out = IntArray(w * h)
         for (i in pixels.indices) {
@@ -129,13 +186,13 @@ object ComboFrameReader {
         return out
     }
 
-    private fun extractPatchFromRoi(roi: IntArray, rect: Rect): IntArray {
+    private fun extractPatchFromRoi(roi: IntArray, rect: Rect, dx: Int = 0, dy: Int = 0): IntArray {
         val pad = 1
         val w = rect.width + 2 * pad
         val h = rect.height + 2 * pad
         val out = IntArray(w * h)
-        val ox = rect.x - ROI_X - pad
-        val oy = rect.y - ROI_Y - pad
+        val ox = rect.x + dx - (ROI_X + dx) - pad
+        val oy = rect.y + dy - (ROI_Y + dy) - pad
         for (row in 0 until h) {
             val sy = (oy + row).coerceIn(0, ROI_H - 1)
             for (col in 0 until w) {
@@ -146,28 +203,28 @@ object ComboFrameReader {
         return out
     }
 
-    private fun isCrafting(roi: IntArray): Boolean {
+    private fun isCrafting(roi: IntArray, dx: Int = 0, dy: Int = 0): Boolean {
         val pairs = listOf(
             HEADER_RECT to ComboTemplates.HEADER,
             SLASH_RECT to ComboTemplates.SLASH
         )
         for ((rect, tpl) in pairs) {
-            val patch = extractPatchFromRoi(roi, rect)
+            val patch = extractPatchFromRoi(roi, rect, dx, dy)
             val (_, dist) = bestMatch(patch, rect.width, rect.height, listOf(tpl))
             if (dist > MAX_DIST_MARK) return false
         }
         return true
     }
 
-    private fun readNumber(roi: IntArray, slots: Array<Rect>): Int? {
+    private fun readNumber(roi: IntArray, slots: Array<Rect>, dx: Int = 0, dy: Int = 0): Int? {
         if (slots.size < 2) return null
         fun isBlank(patch: IntArray): Boolean {
             val lo = patch.minOrNull() ?: 0
             val hi = patch.maxOrNull() ?: 0
             return hi - lo < MIN_CONTRAST
         }
-        val tensPatch = extractPatchFromRoi(roi, slots[0])
-        val onesPatch = extractPatchFromRoi(roi, slots[1])
+        val tensPatch = extractPatchFromRoi(roi, slots[0], dx, dy)
+        val onesPatch = extractPatchFromRoi(roi, slots[1], dx, dy)
         if (isBlank(onesPatch)) return null
         val (onesIdx, onesDist) = bestMatch(
             onesPatch, slots[1].width, slots[1].height, ComboTemplates.DIGITS.toList()
