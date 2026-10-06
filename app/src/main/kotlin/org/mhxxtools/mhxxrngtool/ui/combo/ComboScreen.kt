@@ -294,8 +294,12 @@ fun ComboScreen(
                     )
                 ) {
                     Column(Modifier.padding(10.dp)) {
+                        val driftSuffix = if (r.totalDrift != 0) {
+                            " (${if (r.totalDrift > 0) "+" else ""}${r.totalDrift})"
+                        } else if (r.driftNote != null) " (ずれ検出)" else ""
                         Text(
-                            if (isPrimary) "★ 現在地候補  F${r.frame}" else "候補${idx + 1}  F${r.frame}",
+                            if (isPrimary) "★ 現在地候補  F${r.frame}$driftSuffix"
+                            else "候補${idx + 1}  F${r.frame}$driftSuffix",
                             fontWeight = FontWeight.Bold
                         )
                         Text(
@@ -303,6 +307,13 @@ fun ComboScreen(
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (r.driftNote != null) {
+                            Text(
+                                r.driftNote,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
                         Text(
                             "タップ → 現在地としてタイマーへ",
                             fontSize = 11.sp,
