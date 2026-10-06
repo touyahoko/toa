@@ -43,8 +43,8 @@ object ComboCrossCheck {
     private data class Seg(
         val material: Int,
         val t: Double,
-        val lastProduct: Int?,
-        val productVotes: Map<Int, Int> = emptyMap()
+        /** 区間で最後に読めた完成品。本家どおり最後の値を採用 */
+        val lastProduct: Int?
     )
 
     /**
@@ -126,10 +126,11 @@ object ComboCrossCheck {
     }
 
     /**
-     * 本家 segments() 完全準拠。
+     * 本家 cross.rs segments() と同じ。
      * - 両欄が揃って増えたら別調合として数え直し
      * - 片方だけの増加は読み間違いとして無視
-     * - 新区間開始時は直前の完成品を引き継ぐ (表示遅れ対策)
+     * - 新区間開始時は直前の完成品を引き継ぐ
+     * - 完成品は区間の最後に読めた値をそのまま採用 (多数決しない)
      */
     private fun segments(rows: List<ComboFrameReader.FrameReading>): List<Seg> {
         val segs = mutableListOf<Seg>()
@@ -139,9 +140,9 @@ object ComboCrossCheck {
         val materials = Materials()
 
         for (r in rows.filter { it.crafting }) {
-            // 両欄が揃って増えている → 別の調合が始まった
             val a1 = r.material1
             val a2 = r.material2
+            // 1回の調合で素材が増えることはない。2欄が揃って増えていれば別調合
             if (a1 != null && a2 != null &&
                 prev1 != null && a1 > prev1 &&
                 prev2 != null && a2 > prev2
@@ -153,32 +154,18 @@ object ComboCrossCheck {
 
             val m = materials.value(r.material1, r.material2, prevM) ?: continue
 
-            // 素材が増えることは1回の調合ではあり得ない (片方誤読)
+            // 素材が増えることはあり得ない (片方誤読)
             if (prevM != null && m > prevM) {
-                // prev1/prev2 は更新して次の判定に使う
-                prev1 = r.material1 ?: prev1
-                prev2 = r.material2 ?: prev2
                 continue
             }
 
             if (segs.isEmpty() || segs.last().material != m) {
-                // 新区間: 直前の完成品を引き継ぐ (本家 carry)
                 val carry = segs.lastOrNull()?.lastProduct
                 segs.add(Seg(m, r.t, carry))
             }
+            // 本家: 最後に読めた完成品をそのまま上書き
             if (r.product != null) {
-                val last = segs.last()
-                val prevP = last.lastProduct
-                // 完成品は減らない。減った読みは誤読
-                if (prevP != null && r.product < prevP) {
-                    // ignore
-                } else {
-                    val votes = last.productVotes.toMutableMap()
-                    votes[r.product] = (votes[r.product] ?: 0) + 1
-                    // 区間内の最多票。同票なら大きい値 (08 が 07 に負けるのを防ぐ)
-                    val chosen = votes.entries.maxWith(compareBy({ it.value }, { it.key })).key
-                    segs[segs.lastIndex] = last.copy(lastProduct = chosen, productVotes = votes)
-                }
+                segs[segs.lastIndex] = segs.last().copy(lastProduct = r.product)
             }
             prevM = m
             prev1 = r.material1 ?: prev1
@@ -274,20 +261,12 @@ object ComboCrossCheck {
 
     /**
      * 累計列から検索用の確定列を作る。
-     * 本家どおり、不明値 (null) が1つでもあれば null を返す (無理につなげない)。
-     * 先頭が 00 のときはその次の値から始める（調合開始直後の 0 は使わない）。
+     * 本家どおり、不明値 (null) が1つでもあれば null を返す。
+     * 先頭の 00 も残す（サイト版と同じ。patternFrom 側で先頭3件を落とす）。
      */
     fun toSearchSequence(cumulative: List<Int?>): List<Int>? {
         if (cumulative.isEmpty() || cumulative.any { it == null }) return null
-        return stripLeadingZero(cumulative.map { it!! })
-    }
-
-    /** 先頭の 00 を除き、その次の調合数から始める */
-    fun stripLeadingZero(seq: List<Int>): List<Int> {
-        if (seq.isEmpty()) return seq
-        var i = 0
-        while (i < seq.size && seq[i] == 0) i++
-        return if (i == 0) seq else seq.drop(i)
+        return cumulative.map { it!! }
     }
 
     /**
@@ -332,6 +311,6 @@ object ComboCrossCheck {
                 if (out[i + 1] < CAP) return null
             }
         }
-        return stripLeadingZero(out)
+        return out
     }
 }
