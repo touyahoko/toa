@@ -176,6 +176,25 @@ fun OcrScreen(
             }
         }
 
+        item {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("鑑定の並びでフレーム特定", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("画像を認識するたびに追加し、2件以上で検索します。次の鑑定は10秒以内として探します。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (s.sequence.isEmpty()) "並び: なし" else s.sequence.joinToString(" → "), fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.addCurrentToSequence() }, enabled = s.autoApplyReady != null) { Text("この結果を追加") }
+                        OutlinedButton(onClick = { vm.searchSequence() }, enabled = s.sequence.size >= 2) { Text("並びで検索") }
+                        TextButton(onClick = { vm.clearSequence() }) { Text("クリア") }
+                    }
+                    if (s.sequenceFrame != null) {
+                        Text("★ F${s.sequenceFrame}", fontWeight = FontWeight.Bold, color = Color(0xFF90CAF9))
+                    }
+                    if (s.sequenceNote.isNotBlank()) Text(s.sequenceNote, fontSize = 12.sp)
+                }
+            }
+        }
+
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         // カード 3: フレーム計算結果（検索中でも随時表示）
         // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
