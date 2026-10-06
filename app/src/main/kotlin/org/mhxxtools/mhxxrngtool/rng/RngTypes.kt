@@ -65,7 +65,11 @@ data class CharmResult(
 
 data class FrameResult(
     val frame: Long,
-    val elapsed: ElapsedTime
+    val elapsed: ElapsedTime,
+    /** diagnose 由来のとき: ずれの合計 (括弧の +1 など) */
+    val totalDrift: Int = 0,
+    /** diagnose 由来のとき: "23回目あたりで +1" などの説明 */
+    val driftNote: String? = null
 )
 
 data class ElapsedTime(val days: Long, val hours: Long, val mins: Long, val secs: Long, val frames: Long) {

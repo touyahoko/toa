@@ -294,12 +294,10 @@ class MHXXEngine(kind: Int = 0) {
     // ── 調合列検索 ─────────────────────────────────────────────────────────
 
     /**
-     * 調合列検索（mhxx-combo-scan search.rs Searcher 完全移植）
+     * 調合列検索（mhxx-combo-scan search.rs 完全移植）
      *
-     * ComboSearcher (= search.rs::Searcher) をそのまま使う。
-     * - jumpPure(start) / yield_of / STRIDE=5 / KMP
-     * - frame = offset + consumed - STRIDE*(n-1)
-     * - offset = start - STRIDE*3 - 15 + 2*(raw_len-1)
+     * 1. ComboSearcher で完全一致検索
+     * 2. 0件なら diagnose（ずれ検出）にフォールバック（本家 Web UI と同じ）
      */
     fun searchCombo(
         start: Long, step: Long, comboPositions: List<Int>,
@@ -307,7 +305,6 @@ class MHXXEngine(kind: Int = 0) {
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Sequence<FrameResult> = sequence {
         val searcher = ComboSearcher.create(comboPositions, start) ?: return@sequence
-        // 大きめのチャンクで step（進捗報告用）
         val chunk = 2_000_000L
         var emitted = 0L
         while (searcher.consumed < step) {
@@ -322,6 +319,30 @@ class MHXXEngine(kind: Int = 0) {
                 }
             }
             onProgress(searcher.consumed, step)
+        }
+        // 本家 search.worker: 1件も無いときは diagnose
+        if (emitted == 0L && !shouldStop()) {
+            onProgress(step, step)
+            val d = diagnoseCombo(comboPositions, start, step, shouldStop) ?: return@sequence
+            if (d.frame >= 0) {
+                val note = buildString {
+                    append("ずれ検出")
+                    if (d.totalDrift != 0) append(" (${if (d.totalDrift > 0) "+" else ""}${d.totalDrift})")
+                    val n = d.note()
+                    if (n.isNotEmpty()) append(" · $n")
+                    if (d.totalDrift != 0) {
+                        append(" · 補正後 ${d.frame + d.totalDrift}")
+                    }
+                }
+                yield(
+                    FrameResult(
+                        frame = d.frame,
+                        elapsed = watch(d.frame),
+                        totalDrift = d.totalDrift,
+                        driftNote = note
+                    )
+                )
+            }
         }
     }
 
