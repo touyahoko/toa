@@ -61,6 +61,22 @@ object ComboFrameReader {
      * 任意解像度の Bitmap を受け取り、1280×720 に正規化してから読む。
      * 呼び出し側で frame を recycle すること (正規化コピーは内部で解放)。
      */
+    /**
+     * すでに切り出した ROI 輝度 (公式 321×221) から読む。連続デコード用。
+     */
+    fun readRoi(t: Double, roi: IntArray): FrameReading {
+        if (roi.size != ROI_W * ROI_H) return FrameReading.notCrafting(t)
+        if (!isCrafting(roi)) return FrameReading.notCrafting(t)
+        return FrameReading(
+            t = t,
+            crafting = true,
+            material1 = readNumber(roi, MAT_SLOTS[0]),
+            material2 = readNumber(roi, MAT_SLOTS[1]),
+            product = readNumber(roi, PROD_SLOTS),
+            done = false
+        )
+    }
+
     fun readFrame(t: Double, frame: Bitmap): FrameReading {
         val normalized = normalizeToSource(frame)
         val owned = normalized !== frame
