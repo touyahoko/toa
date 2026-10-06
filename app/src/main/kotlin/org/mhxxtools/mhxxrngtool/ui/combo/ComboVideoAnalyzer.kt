@@ -65,8 +65,14 @@ object ComboVideoAnalyzer {
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<AnalyzeResult> = withContext(Dispatchers.IO) {
         runCatching {
-            // サイト版は RGBA の max(R,G,B) で読む。Y平面だけの連続デコードは
-            // 素材の 9→8 誤読が起きるため、精度優先で Retriever + RGB を使う。
+            // 連続デコードを優先（速度）。失敗時は Retriever + RGB にフォールバック。
+            // 1280×720 固定座標・先頭00維持などの精度修正はそのまま。
+            val sequential = runCatching {
+                decodeSequential(context, uri, beginFrame, endFrame, fps, frameStep, onProgress)
+            }.getOrNull()
+            if (sequential != null && sequential.isNotEmpty()) {
+                return@withContext Result.success(buildResult(sequential))
+            }
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(context, uri)
