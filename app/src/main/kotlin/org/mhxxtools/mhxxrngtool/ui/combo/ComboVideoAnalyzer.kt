@@ -240,6 +240,7 @@ object ComboVideoAnalyzer {
             var inputDone = false
             var outputDone = false
             val seenBelow = booleanArrayOf(false)
+            var capStreak = 0
             var reported = 0
             val dec = decoder!!
 
@@ -261,14 +262,17 @@ object ComboVideoAnalyzer {
                 }
                 val outIndex = dec.dequeueOutputBuffer(info, 10_000)
                 if (outIndex >= 0) {
-                    val frameIdx = ((info.presentationTimeUs * fps) / 1_000_000L).toInt()
+                    val pts = info.presentationTimeUs
+                    val frameIdx = ((pts * fps) / 1_000_000L).toInt()
                     val eos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                    if (frameIdx > end || eos && frameIdx > end) {
+                    // タイムスタンプが飛ぶと frameIdx > end で 99 の手前で切れる。終了は EOS か動画長だけ。
+                    val endUs = (end + 1) * 1_000_000L / fps
+                    if (!eos && pts > endUs + 1_000_000L) {
                         dec.releaseOutputBuffer(outIndex, false)
                         outputDone = true
                         break
                     }
-                    val take = frameIdx >= start && (frameIdx - start) % step == 0 && info.size > 0
+                    val take = pts >= 0 && frameIdx >= start && (frameIdx - start) % step == 0 && info.size > 0
                     if (take) {
                         val image = dec.getOutputImage(outIndex)
                         if (image != null) {
@@ -277,13 +281,20 @@ object ComboVideoAnalyzer {
                                 val t = frameIdx.toDouble() / fps
                                 var reading = ComboFrameReader.readRoi(t, roi)
                                 if (reading.crafting) {
-                                    val done = ComboFrameReader.reachedCap(reading.product, seenBelow)
-                                    if (done) reading = reading.copy(done = true)
-                                    readings.add(reading)
-                                    if (done) {
+                                    val atCap = reading.product != null && reading.product >= ComboFrameReader.CAP
+                                    val done = atCap && ComboFrameReader.reachedCap(reading.product, seenBelow)
+                                    if (done && capStreak < 1) {
+                                        capStreak++
+                                        readings.add(reading)
+                                    } else if (done) {
+                                        reading = reading.copy(done = true)
+                                        readings.add(reading)
                                         dec.releaseOutputBuffer(outIndex, false)
                                         outputDone = true
                                         break
+                                    } else {
+                                        if (!atCap) capStreak = 0
+                                        readings.add(reading)
                                     }
                                 } else {
                                     readings.add(reading)
