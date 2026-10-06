@@ -88,8 +88,13 @@ object ComboFrameReader {
     }
 
     private fun readNormalized(t: Double, frame: Bitmap): FrameReading {
-        // 録画の余白・再エンコードで公式座標から数pxずれる。見出しを探してオフセットする。
-        val (dx, dy) = findHeaderOffset(frame)
+        // 本家は 1280×720 固定座標。解像度が一致するときはオフセット探索しない
+        // （ずれた座標で 9 を 8 と誤読するのを防ぐ）
+        val (dx, dy) = if (frame.width == SOURCE_W && frame.height == SOURCE_H) {
+            0 to 0
+        } else {
+            findHeaderOffset(frame)
+        }
         val roi = extractRoiBrightness(frame, dx, dy)
         if (!isCrafting(roi, dx, dy)) {
             return FrameReading.notCrafting(t)
