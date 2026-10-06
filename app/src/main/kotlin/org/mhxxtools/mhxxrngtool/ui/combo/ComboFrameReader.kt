@@ -192,6 +192,7 @@ object ComboFrameReader {
 
         var bestIdx = -1
         var bestDist = 1.0
+        var secondDist = 1.0
         val total = (tw * th).toDouble()
         val buf = BooleanArray(tw * th)
 
@@ -223,11 +224,18 @@ object ComboFrameReader {
                     }
                     val dist = mismatch / total
                     if (dist < bestDist) {
+                        secondDist = bestDist
                         bestDist = dist
                         bestIdx = ti
+                    } else if (dist < secondDist) {
+                        secondDist = dist
                     }
                 }
             }
+        }
+        // 1位と2位が近すぎる (7と8など) ときは不確実として棄却
+        if (bestIdx >= 0 && secondDist - bestDist < 0.02 && bestDist > 0.05) {
+            return -1 to 1.0
         }
         return bestIdx to bestDist
     }

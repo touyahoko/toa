@@ -26,7 +26,7 @@ data class ComboUiState(
     val beginFrame: Int = 0,
     val endFrame: Int = 899,
     val videoFps: Int = 30,
-    val frameStep: Int = 2,           // 2 で約半分の時間。精度が落ちる場合は 1 に
+    val frameStep: Int = 1,           // 本家同様 1 (全フレーム)
     val isAnalyzing: Boolean = false,
     val analyzeProgress: Float = 0f,
     val analyzeMsg: String = "",

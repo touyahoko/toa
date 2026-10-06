@@ -167,7 +167,11 @@ object ComboCrossCheck {
             }
             if (r.product != null) {
                 val last = segs.last()
-                segs[segs.lastIndex] = last.copy(lastProduct = r.product)
+                val prevP = last.lastProduct
+                // 完成品は調合中に減らない。減った読みは誤読として無視
+                if (prevP == null || r.product >= prevP) {
+                    segs[segs.lastIndex] = last.copy(lastProduct = r.product)
+                }
             }
             prevM = m
             prev1 = r.material1 ?: prev1
