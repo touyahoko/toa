@@ -65,13 +65,17 @@ object ComboVideoAnalyzer {
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
     ): Result<AnalyzeResult> = withContext(Dispatchers.IO) {
         runCatching {
-            // 連続デコードを優先（速度）。失敗時は Retriever + RGB にフォールバック。
-            // 1280×720 固定座標・先頭00維持などの精度修正はそのまま。
+            // 連続デコードを優先（速度）。素材が 99 から始まらない等の誤読時は RGB 再読込。
             val sequential = runCatching {
                 decodeSequential(context, uri, beginFrame, endFrame, fps, frameStep, onProgress)
             }.getOrNull()
             if (sequential != null && sequential.isNotEmpty()) {
-                return@withContext Result.success(buildResult(sequential))
+                val built = buildResult(sequential)
+                // サイトは素材 99 始まりが多い。98 始まりは Y 誤読の可能性 → RGB で取り直す
+                val needRgb = built.materialFrom != null && built.materialFrom < 99
+                if (!needRgb) {
+                    return@withContext Result.success(built)
+                }
             }
             val retriever = MediaMetadataRetriever()
             try {
@@ -323,22 +327,48 @@ object ComboVideoAnalyzer {
         }
     }
 
+    /**
+     * 本家 read.rs と同じく max(R,G,B) 相当の輝度を ROI から取る。
+     * Y だけだと素材の 9 が 8 に化け、先頭 00 区間が欠ける。
+     */
     private fun yRoi(image: Image, codedW: Int, codedH: Int): IntArray {
-        val plane = image.planes[0]
-        val buf = plane.buffer
-        val rowStride = plane.rowStride
-        val pixelStride = plane.pixelStride
+        val yPlane = image.planes[0]
+        val uPlane = image.planes.getOrNull(1)
+        val vPlane = image.planes.getOrNull(2)
+        val yBuf = yPlane.buffer
+        val yRow = yPlane.rowStride
+        val yPix = yPlane.pixelStride
+        val uBuf = uPlane?.buffer
+        val vBuf = vPlane?.buffer
+        val uRow = uPlane?.rowStride ?: 0
+        val vRow = vPlane?.rowStride ?: 0
+        val uPix = uPlane?.pixelStride ?: 1
+        val vPix = vPlane?.pixelStride ?: 1
         val vw = image.width.coerceAtLeast(1)
         val vh = image.height.coerceAtLeast(1)
         val out = IntArray(ComboFrameReader.ROI_W * ComboFrameReader.ROI_H)
         var i = 0
         for (ry in 0 until ComboFrameReader.ROI_H) {
             val sy = ((ComboFrameReader.ROI_Y + ry) * vh / ComboFrameReader.SOURCE_H).coerceIn(0, vh - 1)
-            val row = sy * rowStride
             for (rx in 0 until ComboFrameReader.ROI_W) {
                 val sx = ((ComboFrameReader.ROI_X + rx) * vw / ComboFrameReader.SOURCE_W).coerceIn(0, vw - 1)
-                val pos = row + sx * pixelStride
-                out[i++] = if (pos in 0 until buf.limit()) buf.get(pos).toInt() and 0xFF else 0
+                val yPos = sy * yRow + sx * yPix
+                val y = if (yPos in 0 until yBuf.limit()) yBuf.get(yPos).toInt() and 0xFF else 0
+                var bright = y
+                if (uBuf != null && vBuf != null) {
+                    val ux = sx / 2
+                    val uy = sy / 2
+                    val uPos = uy * uRow + ux * uPix
+                    val vPos = uy * vRow + ux * vPix
+                    val u = if (uPos in 0 until uBuf.limit()) (uBuf.get(uPos).toInt() and 0xFF) - 128 else 0
+                    val v = if (vPos in 0 until vBuf.limit()) (vBuf.get(vPos).toInt() and 0xFF) - 128 else 0
+                    // BT.601 近似 → max(R,G,B)
+                    val r = (y + ((359 * v) / 256)).coerceIn(0, 255)
+                    val g = (y - ((88 * u + 183 * v) / 256)).coerceIn(0, 255)
+                    val b = (y + ((454 * u) / 256)).coerceIn(0, 255)
+                    bright = maxOf(r, g, b)
+                }
+                out[i++] = bright
             }
         }
         return out
