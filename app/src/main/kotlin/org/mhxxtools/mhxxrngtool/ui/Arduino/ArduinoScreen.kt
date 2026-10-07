@@ -70,7 +70,7 @@ fun ArduinoScreen(
 
     Column(Modifier.fillMaxSize()) {
         Text(
-            "Arduino 自動化（Leonardo / コンテニュー連打法）",
+            "Arduino 自動化（Switch 1 / Leonardo / コンテニュー連打法）",
             fontWeight = FontWeight.Bold,
             fontSize = 15.sp,
             color = HtmlColors.Text
@@ -191,7 +191,10 @@ private fun buildIno(
     kindName: String,
     charmLabel: String
 ): String = """
-// MHXX お守りスナイプ自動化 (Leonardo / NintendoSwitchControlLibrary)
+// MHXX お守りスナイプ自動化 (Switch 1 / Leonardo)
+// 対象: Nintendo Switch 初代・有機EL。Switch 2 では認識しません。
+// ライブラリ: NintendoSwitchControlLibrary（Horipad 互換の USB HID）
+// boards.txt は Switch 1 用の VID/PID のまま使うこと。
 // 目標フレーム: $frame
 // 錬金種類: $kindName
 // お守り: ${charmLabel.ifBlank { "未選択" }}
@@ -233,6 +236,8 @@ void pressABAlternately(unsigned long n) {
 }
 
 void setup(){
+    // Switch 1 がマイコンをプロコンとして認識するまで B を送る
+    pushButton(Button::B, 500, 5);
     delay(50);
     pushButton(Button::A, 250, 4);
     delay(50);
