@@ -25,17 +25,7 @@ data class OcrUiState(
     val searchStatus: String = "",
     val frameResults: List<CharmResult> = emptyList(),
     val totalFound: Int = 0,
-    val autoApplyReady: ApplyData? = null,
-    val sequence: List<String> = emptyList(),
-    val sequenceFrame: Long? = null,
-    val sequenceNote: String = ""
-)
-
-data class SeqCharm(
-    val label: String,
-    val kind: Int,
-    val origin: Int,
-    val target: SearchTarget
+    val autoApplyReady: ApplyData? = null
 )
 
 data class ApplyData(
@@ -57,7 +47,6 @@ class OcrViewModel : ViewModel() {
     private val _state = MutableStateFlow(OcrUiState())
     val state: StateFlow<OcrUiState> = _state.asStateFlow()
     private var searchJob: Job? = null
-    private val sequenceCharms = mutableListOf<SeqCharm>()
 
     /**
      * 検索幅（フレーム数）。
@@ -314,92 +303,4 @@ class OcrViewModel : ViewModel() {
     }
 
     fun clearAutoApply() = _state.update { it.copy(autoApplyReady = null) }
-
-    fun addCurrentToSequence() {
-        val apply = _state.value.autoApplyReady ?: return
-        val kind = apply.kind
-        val tbl = KIND_TABLES[kind] ?: return
-        val s1Name = apply.skill1Name ?: return
-        val s1Pts = apply.skill1Pts ?: return
-        val s1Local = tbl.skill1.indexOfFirst {
-            SKILL_NAMES[it].replace("　", "").trim() == s1Name
-        }
-        if (s1Local < 0) return
-        val s2Local = apply.skill2Name?.let { name ->
-            tbl.skill2.indexOfFirst { SKILL_NAMES[it].replace("　", "").trim() == name }
-        }
-        val target = SearchTarget(
-            skill1Idx = s1Local,
-            skill1Pts = s1Pts,
-            skill2Idx = s2Local?.takeIf { it >= 0 },
-            skill2Pts = apply.skill2Pts ?: 0,
-            slot = apply.slot ?: -1,
-            origin = 0
-        )
-        val label = buildString {
-            append(s1Name).append(" ").append(if (s1Pts >= 0) "+" else "").append(s1Pts)
-            if (apply.skill2Name != null) append(" / ").append(apply.skill2Name).append(" ").append(apply.skill2Pts ?: 0)
-            append(" スロ").append(apply.slot ?: "?")
-        }
-        sequenceCharms.add(SeqCharm(label, kind, 0, target))
-        _state.update { it.copy(sequence = sequenceCharms.map { c -> c.label }, sequenceNote = "${sequenceCharms.size}件") }
-    }
-
-    fun clearSequence() {
-        sequenceCharms.clear()
-        _state.update { it.copy(sequence = emptyList(), sequenceFrame = null, sequenceNote = "") }
-    }
-
-    /** 鑑定の並びと一致する最初のフレーム。次の鑑定は最大10秒以内。 */
-    fun searchSequence() {
-        if (sequenceCharms.size < 2) {
-            _state.update { it.copy(sequenceNote = "2件以上追加してください") }
-            return
-        }
-        searchJob?.cancel()
-        searchJob = viewModelScope.launch(Dispatchers.Default) {
-            _state.update { it.copy(isSearching = true, sequenceNote = "並びを検索中…") }
-            val first = sequenceCharms.first()
-            val engine = MHXXEngine(first.kind)
-            val hits = engine.search(0L, SEARCH_STEP, first.target, shouldStop = { !isActive })
-                .take(400)
-                .toList()
-            var found: Long? = null
-            var note = "候補なし"
-            for (hit in hits) {
-                if (!isActive) break
-                var frame = hit.frame
-                var ok = true
-                for (next in sequenceCharms.drop(1)) {
-                    var matched: Long? = null
-                    val eng = MHXXEngine(next.kind)
-                    for (gap in 1..300) {
-                        val c = eng.charmAt(frame + gap, next.target.origin).charm
-                        if (charmMatches(c, next.target, next.kind)) {
-                            matched = frame + gap
-                            break
-                        }
-                    }
-                    if (matched == null) { ok = false; break }
-                    frame = matched
-                }
-                if (ok) {
-                    found = hit.frame
-                    note = "F${hit.frame} から ${sequenceCharms.size}件一致"
-                    break
-                }
-            }
-            _state.update { it.copy(isSearching = false, sequenceFrame = found, sequenceNote = note) }
-        }
-    }
-
-    private fun charmMatches(c: Charm, t: SearchTarget, kind: Int): Boolean {
-        val tbl = KIND_TABLES[kind] ?: return false
-        val s1 = t.skill1Idx?.let { tbl.skill1.getOrNull(it) }?.let { SKILL_NAMES[it].replace("　", "").trim() }
-        if (s1 != null && c.skill1Name.replace("　", "").trim() != s1) return false
-        if (c.skill1Pts != t.skill1Pts) return false
-        if (t.slot >= 0 && c.slot != t.slot) return false
-        val s2 = t.skill2Idx?.let { tbl.skill2.getOrNull(it) }?.let { SKILL_NAMES[it].replace("　", "").trim() }
-        return if (s2 == null) c.skill2Name == null else c.skill2Name?.replace("　", "")?.trim() == s2 && c.skill2Pts == t.skill2Pts
-    }
 }
