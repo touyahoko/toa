@@ -57,43 +57,28 @@ class OcrViewModel : ViewModel() {
     /** 表示上限（メモリ保護）。この件数を超えた分は totalFound にのみ反映 */
     private val DISPLAY_CAP = 500
 
-    /**
-     * 鑑定画面スクショ（基準解像度 1200×675）における
-     * お守り情報パネルの固定クロップ領域（相対座標 0.0〜1.0）。
-     *
-     * 実測座標（絶対）: left=445, top=88, right=792, bottom=235
-     * 幅=347 / 高さ=147
-     */
-    private val FIXED_CROP_LEFT   = 445f / 1200f   // 0.3708
-    private val FIXED_CROP_TOP    =  88f / 675f    // 0.1304
-    private val FIXED_CROP_RIGHT  = 792f / 1200f   // 0.6600
-    private val FIXED_CROP_BOTTOM = 235f / 675f    // 0.3481
-
     fun recognizeFromUri(
         context: Context,
         uri: Uri,
         userKind: Int = -1
     ) {
         searchJob?.cancel()
-        _state.update { OcrUiState(isProcessing = true, ocrStatus = "OCR 認識中…") }
+        _state.update { OcrUiState(isProcessing = true, ocrStatus = "パネル検出 → OCR 中…") }
 
         viewModelScope.launch {
-            // お守り情報パネルのみを固定クロップして OCR
+            // ML Kit バウンディングボックスでパネル位置を検出し、そこだけ OCR
+            // （スマホ撮影の構図ズレ対応。失敗時は固定座標にフォールバック）
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch
             }
-            val rawText = AndroidOcr.recognizeCropped(
-                bmp,
-                FIXED_CROP_LEFT, FIXED_CROP_TOP,
-                FIXED_CROP_RIGHT, FIXED_CROP_BOTTOM
-            ).getOrElse { e ->
+            val (rawText, detectNote) = AndroidOcr.recognizeAppraisal(bmp).getOrElse { e ->
                 bmp.recycle()
                 setError("OCR エラー: ${e.message}"); return@launch
             }
             bmp.recycle()
 
             if (rawText.isBlank()) {
-                setError("テキストを検出できませんでした。\n中央のお守り情報パネルが写っている鑑定画面（1200×675）を使用してください。")
+                setError("テキストを検出できませんでした。\n鑑定結果のお守りパネル（スキル・スロット）が写っている写真を使用してください。\n($detectNote)")
                 return@launch
             }
 
