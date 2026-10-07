@@ -50,6 +50,7 @@ fun MainScreen(appState: AppStateViewModel) {
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var arduinoFrame by remember { mutableStateOf<Long?>(null) }
+    var arduinoCharm by remember { mutableStateOf("") }
 
     LaunchedEffect(appState.kind) {
         searchVm.onKindChanged(appState.kind)
@@ -183,8 +184,16 @@ fun MainScreen(appState: AppStateViewModel) {
                 )
                 6 -> TimerScreen(vm = timerVm)
                 7 -> ArduinoScreen(
+                    vm = searchVm,
+                    kind = appState.kind,
+                    onKind = { appState.setKind(it) },
                     targetFrame = arduinoFrame,
-                    onFrameChange = { arduinoFrame = it }
+                    charmLabel = arduinoCharm,
+                    onPick = { frame, label ->
+                        arduinoFrame = frame
+                        arduinoCharm = label
+                        timerVm.setTargetFrame(frame)
+                    }
                 )
             }
         }
