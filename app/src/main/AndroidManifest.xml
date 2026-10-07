@@ -3,7 +3,6 @@
 
     <!-- Camera: OCR撮影 / UVC キャプチャーカード -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Gallery access -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- 動画解析機能: Android 13+ で動画ファイルアクセスに必要 -->
