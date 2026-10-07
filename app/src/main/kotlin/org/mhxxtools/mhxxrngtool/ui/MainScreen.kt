@@ -7,24 +7,21 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.widget.Toast
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.mhxxtools.mhxxrngtool.AppStateViewModel
 import org.mhxxtools.mhxxrngtool.rng.KIND_NAMES
 import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointScreen
 import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointViewModel
+import org.mhxxtools.mhxxrngtool.ui.arduino.ArduinoScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundViewModel
 import org.mhxxtools.mhxxrngtool.ui.combo.ComboScreen
@@ -39,7 +36,7 @@ import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "Arduino")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -52,52 +49,7 @@ fun MainScreen(appState: AppStateViewModel) {
     val timerVm: TimerViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val context = LocalContext.current
-    var listening by remember { mutableStateOf(false) }
-    val micPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) listening = true
-        else Toast.makeText(context, "マイクの許可が必要です", Toast.LENGTH_SHORT).show()
-    }
-
-    LaunchedEffect(listening) {
-        if (!listening) return@LaunchedEffect
-        VoiceCommands.listen(
-            context,
-            onText = { said ->
-                listening = false
-                val action = VoiceCommands.parse(said)
-                if (action == null) {
-                    Toast.makeText(context, "未対応: $said", Toast.LENGTH_SHORT).show()
-                } else {
-                action.kind?.let { appState.setKind(it) }
-                action.tab?.let { selectedTab = it }
-                when (action.run) {
-                    "search" -> {
-                        selectedTab = action.tab ?: 0
-                        if ((action.tab ?: 0) == 2) comboVm.startSearch() else searchVm.startSearch()
-                    }
-                    "analyze" -> {
-                        selectedTab = 2
-                        comboVm.startAnalysis()
-                    }
-                    "start" -> when (action.tab ?: selectedTab) {
-                        6 -> timerVm.startCountdown()
-                        2 -> comboVm.startAnalysis()
-                        5 -> Toast.makeText(context, "鑑定は画像を選んでください", Toast.LENGTH_SHORT).show()
-                        else -> searchVm.startSearch()
-                    }
-                }
-                Toast.makeText(context, "音声: $said", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onError = {
-                listening = false
-                Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
+    var arduinoFrame by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(appState.kind) {
         searchVm.onKindChanged(appState.kind)
@@ -107,7 +59,6 @@ fun MainScreen(appState: AppStateViewModel) {
         Modifier
             .fillMaxSize()
             .background(HtmlColors.Bg)
-            // 時計・電池アイコンとタイトルが重ならないようにする
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
         Column(
@@ -159,14 +110,6 @@ fun MainScreen(appState: AppStateViewModel) {
                         onClick = { appState.setKind(idx) }
                     )
                 }
-                Spacer(Modifier.weight(1f))
-                HtmlChip(
-                    label = if (listening) "聞き取り中" else "音声",
-                    selected = listening,
-                    onClick = {
-                        micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
-                    }
-                )
             }
 
             Spacer(Modifier.height(2.dp))
@@ -204,17 +147,17 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = searchVm,
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
-                        // 目標フレームとしてセット → 現在地があれば自動で残り計算
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 6
+                        arduinoFrame = frame
+                        selectedTab = 7
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
                 2 -> ComboScreen(
                     vm = comboVm,
                     onResultTap = { frame ->
-                        // 現在地としてセット → 目標があれば自動で残り計算
                         timerVm.setCurrentPosFrame(frame)
+                        arduinoFrame = frame
                         selectedTab = 6
                     }
                 )
@@ -234,10 +177,15 @@ fun MainScreen(appState: AppStateViewModel) {
                     },
                     onFrameTap = { frame ->
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 6
+                        arduinoFrame = frame
+                        selectedTab = 7
                     }
                 )
                 6 -> TimerScreen(vm = timerVm)
+                7 -> ArduinoScreen(
+                    targetFrame = arduinoFrame,
+                    onFrameChange = { arduinoFrame = it }
+                )
             }
         }
     }
@@ -246,13 +194,11 @@ fun MainScreen(appState: AppStateViewModel) {
 @Composable
 private fun HtmlChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val bg = if (selected) HtmlColors.Accent else HtmlColors.Surface2
-    val borderC = if (selected) HtmlColors.Accent else HtmlColors.Border
     val fg = if (selected) Color.White else HtmlColors.Text
     Box(
         Modifier
             .clip(RoundedCornerShape(16.dp))
             .background(bg)
-            .border(1.dp, borderC, RoundedCornerShape(16.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
@@ -271,13 +217,13 @@ private fun HtmlTab(title: String, selected: Boolean, onClick: () -> Unit) {
         Text(
             title,
             fontSize = 13.sp,
-            color = if (selected) HtmlColors.Accent else HtmlColors.Muted,
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) HtmlColors.Accent else HtmlColors.Muted
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Box(
             Modifier
-                .width(32.dp)
+                .width(28.dp)
                 .height(2.dp)
                 .background(if (selected) HtmlColors.Accent else Color.Transparent)
         )
