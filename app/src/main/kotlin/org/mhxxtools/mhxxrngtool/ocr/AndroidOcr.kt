@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.Rect
 import android.net.Uri
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -20,30 +21,47 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * 鑑定 OCR — APK 内蔵オンデバイス。
  *
  * Google ML Kit Text Recognition (Japanese + Latin) を併用。
- * クラウド API なし・API キー不要。モデルは端末内で動作。
- *
- * 強化点:
- * - コントラスト強調 + グレースケール前処理
- * - 3 倍拡大（小さい UI 文字向け）
- * - 日本語エンジンとラテン数字エンジンを並列実行して結合
- * - 複数スケールの結果をマージ
+ * スマホ撮影の構図ズレに対応するため、バウンディングボックスで
+ * 「スキル」「スロット」「お守り」等をアンカーにしてパネル位置を検出し、
+ * その領域だけを切り出して高精度 OCR する。
  */
 object AndroidOcr {
 
-    /** 日本語（スキル名・ラベル） */
     private val jaRecognizer by lazy {
         TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     }
 
-    /** ラテン（数字・スロット ○ など） */
     private val latinRecognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
+
+    /** Switch スクショ基準の固定相対クロップ（フォールバック用） */
+    private const val FIXED_L = 445f / 1200f
+    private const val FIXED_T = 88f / 675f
+    private const val FIXED_R = 792f / 1200f
+    private const val FIXED_B = 235f / 675f
+
+    /** パネル検出のアンカーキーワード（部分一致） */
+    private val ANCHOR_KEYS = listOf(
+        "スキル", "スロット", "スロッ", "スロ",
+        "お守り", "風化", "古び", "光る", "なぞ",
+        "固有", "攻撃", "防御", "体力", "達人", "痛撃",
+        "回避", "ガード", "耐", "属性", "会心", "装填",
+        "研ぎ", "斬れ味", "剣術", "砲術", "底力", "根性"
+    )
+
+    data class PanelDetectResult(
+        val crop: Rect,
+        val anchors: List<String>,
+        val method: String
+    )
 
     suspend fun ocrBitmap(bitmap: Bitmap): String = recognizeBest(bitmap)
 
@@ -65,15 +83,10 @@ object AndroidOcr {
             .addOnFailureListener { cont.resume(null) }
     }
 
-    /**
-     * 前処理: コントラスト強調したグレースケール相当の Bitmap。
-     * ゲーム UI の薄い文字を ML Kit が拾いやすくする。
-     */
     private fun enhanceForOcr(src: Bitmap): Bitmap {
         val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        // コントラスト + 輝度
         val cm = ColorMatrix(
             floatArrayOf(
                 1.4f, 0f, 0f, 0f, -30f,
@@ -82,7 +95,6 @@ object AndroidOcr {
                 0f, 0f, 0f, 1f, 0f
             )
         )
-        // グレースケール化
         val gray = ColorMatrix().apply { setSaturation(0f) }
         cm.postConcat(gray)
         paint.colorFilter = ColorMatrixColorFilter(cm)
@@ -95,7 +107,6 @@ object AndroidOcr {
         return Bitmap.createScaledBitmap(src, src.width * factor, src.height * factor, true)
     }
 
-    /** 日英並列 + 前処理 + 3x 拡大で最良テキストを返す */
     private suspend fun recognizeBest(bitmap: Bitmap): String = coroutineScope {
         val enhanced = enhanceForOcr(bitmap)
         val scaled3 = upscale(enhanced, 3)
@@ -112,13 +123,11 @@ object AndroidOcr {
         if (scaled2 !== enhanced) scaled2.recycle()
         if (enhanced !== bitmap) enhanced.recycle()
 
-        // 最長かつ日本語スキルっぽい文字を含むものを優先して結合
         mergeOcrTexts(texts)
     }
 
     private fun mergeOcrTexts(texts: List<String>): String {
         if (texts.isEmpty()) return ""
-        // 行単位でユニーク結合（長い方を優先）
         val lines = linkedSetOf<String>()
         texts.sortedByDescending { it.length }.forEach { t ->
             t.lines().map { it.trim() }.filter { it.isNotEmpty() }.forEach { lines.add(it) }
@@ -136,9 +145,124 @@ object AndroidOcr {
         }
 
     /**
-     * 相対座標で切り出して OCR。
-     * 小さい日本語 UI 向けに 3 倍拡大 + コントラスト強調 + 日英併用。
+     * ML Kit の行バウンディングボックスからお守りパネル領域を推定する。
+     * スマホ撮影のズレ・傾き・余白に対応。
      */
+    suspend fun detectPanel(bitmap: Bitmap): PanelDetectResult? = withContext(Dispatchers.IO) {
+        val w = bitmap.width
+        val h = bitmap.height
+        // 大きい写真は縮小して検出（速度・安定性）
+        val maxSide = max(w, h)
+        val scale = if (maxSide > 1280) 1280f / maxSide else 1f
+        val work = if (scale < 1f) {
+            Bitmap.createScaledBitmap(bitmap, (w * scale).roundToInt(), (h * scale).roundToInt(), true)
+        } else bitmap
+
+        val text = processTextSafe(jaRecognizer, work) ?: run {
+            if (work !== bitmap) work.recycle()
+            return@withContext null
+        }
+
+        val inv = if (scale < 1f) 1f / scale else 1f
+        data class Hit(val box: Rect, val label: String)
+        val hits = mutableListOf<Hit>()
+
+        for (block in text.textBlocks) {
+            for (line in block.lines) {
+                val t = (line.text ?: "").replace(" ", "").replace("　", "")
+                if (t.isBlank()) continue
+                val box = line.boundingBox ?: continue
+                val mapped = Rect(
+                    (box.left * inv).roundToInt(),
+                    (box.top * inv).roundToInt(),
+                    (box.right * inv).roundToInt(),
+                    (box.bottom * inv).roundToInt()
+                )
+                val key = ANCHOR_KEYS.firstOrNull { t.contains(it) } ?: continue
+                hits.add(Hit(mapped, "$key:$t"))
+            }
+        }
+
+        if (work !== bitmap) work.recycle()
+        if (hits.isEmpty()) return@withContext null
+
+        // スキル/スロット系を優先。なければ全アンカー
+        val preferred = hits.filter {
+            it.label.startsWith("スキル") || it.label.startsWith("スロ") ||
+                it.label.startsWith("お守り") || it.label.startsWith("風化") ||
+                it.label.startsWith("古び") || it.label.startsWith("光る") ||
+                it.label.startsWith("なぞ")
+        }
+        val used = if (preferred.size >= 2) preferred else hits
+
+        var left = used.minOf { it.box.left }
+        var top = used.minOf { it.box.top }
+        var right = used.maxOf { it.box.right }
+        var bottom = used.maxOf { it.box.bottom }
+
+        // パネル余白（相対）。スキル行の上に種類名、下にスロットがある想定で拡張
+        val pw = right - left
+        val ph = bottom - top
+        val padX = max((pw * 0.35f).roundToInt(), (w * 0.04f).roundToInt())
+        val padTop = max((ph * 0.55f).roundToInt(), (h * 0.03f).roundToInt())
+        val padBottom = max((ph * 0.45f).roundToInt(), (h * 0.03f).roundToInt())
+
+        left = max(0, left - padX)
+        top = max(0, top - padTop)
+        right = min(w, right + padX)
+        bottom = min(h, bottom + padBottom)
+
+        // 最低サイズ（小さすぎる検出は捨てる）
+        if (right - left < w * 0.12f || bottom - top < h * 0.06f) return@withContext null
+
+        PanelDetectResult(
+            crop = Rect(left, top, right, bottom),
+            anchors = used.map { it.label }.distinct().take(12),
+            method = "bbox"
+        )
+    }
+
+    /** Switch 固定座標のフォールバック領域 */
+    fun fixedPanelRect(bitmap: Bitmap): Rect {
+        val w = bitmap.width
+        val h = bitmap.height
+        return Rect(
+            (FIXED_L * w).toInt().coerceIn(0, w - 2),
+            (FIXED_T * h).toInt().coerceIn(0, h - 2),
+            (FIXED_R * w).toInt().coerceIn(1, w),
+            (FIXED_B * h).toInt().coerceIn(1, h)
+        )
+    }
+
+    /**
+     * 鑑定画像向け: パネル検出 → 切り出し → 強化 OCR。
+     * 検出失敗時は固定座標にフォールバック。
+     */
+    suspend fun recognizeAppraisal(bitmap: Bitmap): Result<Pair<String, String>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val detected = detectPanel(bitmap)
+                val rect = detected?.crop ?: fixedPanelRect(bitmap)
+                val method = detected?.method ?: "fixed"
+                val x = rect.left.coerceIn(0, bitmap.width - 2)
+                val y = rect.top.coerceIn(0, bitmap.height - 2)
+                val rw = (rect.right - rect.left).coerceIn(1, bitmap.width - x)
+                val rh = (rect.bottom - rect.top).coerceIn(1, bitmap.height - y)
+                val crop = Bitmap.createBitmap(bitmap, x, y, rw, rh)
+                val text = try {
+                    recognizeBest(crop)
+                } finally {
+                    crop.recycle()
+                }
+                val note = if (detected != null) {
+                    "パネル検出($method) anchors=${detected.anchors.joinToString(",")}"
+                } else {
+                    "固定座標クロップ"
+                }
+                text to note
+            }
+        }
+
     suspend fun recognizeCropped(
         bitmap: Bitmap,
         cropLeft: Float, cropTop: Float,
@@ -180,10 +304,6 @@ object AndroidOcr {
         val slotCrop: Bitmap?
     )
 
-    /**
-     * 「スロット」ラベルの右側を切り出して判定。
-     * 日本語エンジンでラベル位置を取り、切り出しを強化 OCR。
-     */
     suspend fun recognizeSlotLine(bitmap: Bitmap): SlotOcr {
         val result = processTextSafe(jaRecognizer, bitmap)
             ?: return SlotOcr("", "", "", null, null)
@@ -192,7 +312,7 @@ object AndroidOcr {
         var crop: Bitmap? = null
         val w = bitmap.width
         val h = bitmap.height
-        var slotBox: android.graphics.Rect? = null
+        var slotBox: Rect? = null
 
         for (block in result.textBlocks) {
             for (lineEl in block.lines) {
@@ -230,7 +350,6 @@ object AndroidOcr {
             }
         }
 
-        // 切り出しを強化 OCR（ラテン含む）して ○ / --- を拾う
         val cropText = crop?.let { recognizeBest(it) } ?: ""
         val parsedLine = if (line.isNotBlank()) SlotDetector.parseFromText(line) else null
         val parsedCrop = if (cropText.isNotBlank()) SlotDetector.parseFromText(cropText) else null
