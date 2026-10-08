@@ -13,8 +13,8 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * assets/charm_templates の切り出しPNGで鑑定画面を照合する。
- * スキル名が assets に無い場合だけフォント描画テンプレにフォールバックする。
+ * assets/charm_templates の切り出しPNGだけで鑑定画面を読む（OCRなし）。
+ * Switch 1200×675 は固定座標を優先。
  */
 object CharmTemplateReader {
 
@@ -27,47 +27,73 @@ object CharmTemplateReader {
     private var digitTmpls: List<Pair<Int, Array<IntArray>>> = emptyList()
     private var slotTmpls: List<Pair<Int, Array<IntArray>>> = emptyList()
 
+    private val FIXED_NAME1 = Rect(618, 150, 740, 180)
+    private val FIXED_PTS1 = Rect(738, 150, 800, 180)
+    private val FIXED_NAME2 = Rect(618, 178, 740, 208)
+    private val FIXED_PTS2 = Rect(738, 178, 800, 208)
+    private val FIXED_SLOT = Rect(500, 204, 680, 232)
+
     suspend fun read(context: Context, bitmap: Bitmap): Result<ReadResult> = withContext(Dispatchers.Default) {
         runCatching {
             ensureLoaded(context)
+            if (skillTmpls.isEmpty()) {
+                error("テンプレが assets にありません (charm_templates/skills)")
+            }
+            if (bitmap.width in 1180..1220 && bitmap.height in 660..690) {
+                val r = matchFixed(bitmap)
+                if (r.charm.skills.isNotEmpty()) return@runCatching r
+            }
             val work = downscale(bitmap, 960)
             val panel = findPanel(work) ?: Rect(
-                (work.width * 0.28f).toInt(),
-                (work.height * 0.08f).toInt(),
-                (work.width * 0.72f).toInt(),
-                (work.height * 0.42f).toInt()
+                (work.width * 0.30f).toInt(),
+                (work.height * 0.10f).toInt(),
+                (work.width * 0.70f).toInt(),
+                (work.height * 0.45f).toInt()
             )
-            val crop = Bitmap.createBitmap(
-                work,
-                panel.left.coerceIn(0, work.width - 2),
-                panel.top.coerceIn(0, work.height - 2),
-                panel.width().coerceIn(1, work.width - panel.left),
-                panel.height().coerceIn(1, work.height - panel.top)
-            )
+            val crop = safeCrop(work, panel)
             val gray = toGray(crop)
             val h = gray.size
             val w = gray[0].size
-            val row1 = band(gray, (h * 0.22f).toInt(), (h * 0.46f).toInt())
-            val row2 = band(gray, (h * 0.42f).toInt(), (h * 0.66f).toInt())
-            val rowSlot = band(gray, (h * 0.58f).toInt(), (h * 0.82f).toInt())
-            val nameW = (w * 0.68f).toInt()
-            val ptsL = (w * 0.62f).toInt()
-
+            val row1 = band(gray, (h * 0.18f).toInt(), (h * 0.42f).toInt())
+            val row2 = band(gray, (h * 0.38f).toInt(), (h * 0.62f).toInt())
+            val rowSlot = band(gray, (h * 0.55f).toInt(), (h * 0.80f).toInt())
+            val nameW = (w * 0.72f).toInt()
+            val ptsL = (w * 0.58f).toInt()
             val s1 = matchSkill(sub(row1, 0, nameW))
             val s2 = matchSkill(sub(row2, 0, nameW))
             val p1 = matchPoints(sub(row1, ptsL, w - ptsL))
             val p2 = matchPoints(sub(row2, ptsL, w - ptsL))
             val slots = matchSlots(rowSlot)
-
-            val skills = mutableListOf<OcrSkill>()
-            if (s1 != null) skills += OcrSkill(s1.first, s1.second, p1 ?: 0)
-            if (s2 != null && (p2 ?: 0) > 0) skills += OcrSkill(s2.first, s2.second, p2 ?: 0)
-            val note = "assets skills=${skillTmpls.size} digits=${digitTmpls.size} slots=${slotTmpls.size} " +
-                "s1=${s1?.second ?: "?"}($p1) s2=${s2?.second ?: "?"}($p2) slot=$slots"
+            val skills = buildSkills(s1, p1, s2, p2)
+            val note = "panel ${panel.width()}x${panel.height()} assets s=${skillTmpls.size} d=${digitTmpls.size} sl=${slotTmpls.size} s1=${s1?.second ?: "?"}($p1) s2=${s2?.second ?: "?"}($p2) slot=$slots"
             if (work !== bitmap) work.recycle()
             crop.recycle()
             ReadResult(OcrCharm(-1, slots, skills), note)
         }
+    }
+
+    private fun matchFixed(bitmap: Bitmap): ReadResult {
+        val s1 = matchSkill(toGray(safeCrop(bitmap, FIXED_NAME1)))
+        val s2 = matchSkill(toGray(safeCrop(bitmap, FIXED_NAME2)))
+        val p1 = matchPoints(toGray(safeCrop(bitmap, FIXED_PTS1)))
+        val p2 = matchPoints(toGray(safeCrop(bitmap, FIXED_PTS2)))
+        val slots = matchSlots(toGray(safeCrop(bitmap, FIXED_SLOT)))
+        val skills = buildSkills(s1, p1, s2, p2)
+        val note = "fixed1200 s1=${s1?.second ?: "?"}($p1) s2=${s2?.second ?: "?"}($p2) slot=$slots"
+        return ReadResult(OcrCharm(-1, slots, skills), note)
+    }
+
+    private fun buildSkills(
+        s1: Pair<Int, String>?,
+        p1: Int?,
+        s2: Pair<Int, String>?,
+        p2: Int?
+    ): List<OcrSkill> {
+        val skills = mutableListOf<OcrSkill>()
+        if (s1 != null && (p1 ?: 0) > 0) skills += OcrSkill(s1.first, s1.second, p1!!)
+        else if (s1 != null) skills += OcrSkill(s1.first, s1.second, p1 ?: 0)
+        if (s2 != null && (p2 ?: 0) > 0) skills += OcrSkill(s2.first, s2.second, p2!!)
+        return skills
     }
 
     private fun ensureLoaded(context: Context) {
@@ -92,7 +118,9 @@ object CharmTemplateReader {
     private fun loadDir(context: Context, dir: String): List<Pair<String, Array<IntArray>>> {
         val names = context.assets.list(dir).orEmpty()
         return names.mapNotNull { name ->
-            val bmp = context.assets.open("$dir/$name").use { BitmapFactory.decodeStream(it) } ?: return@mapNotNull null
+            if (!name.endsWith(".png", ignoreCase = true)) return@mapNotNull null
+            val bmp = context.assets.open("$dir/$name").use { BitmapFactory.decodeStream(it) }
+                ?: return@mapNotNull null
             val g = toGray(bmp)
             bmp.recycle()
             name to g
@@ -100,9 +128,9 @@ object CharmTemplateReader {
     }
 
     private fun matchSkill(region: Array<IntArray>): Pair<Int, String>? {
-        if (region.isEmpty()) return null
+        if (region.isEmpty() || skillTmpls.isEmpty()) return null
         var bestName = ""
-        var best = 0.38f
+        var best = 0.28f
         for (t in skillTmpls) {
             val s = ncc(region, t.gray)
             if (s > best) {
@@ -112,13 +140,14 @@ object CharmTemplateReader {
         }
         if (bestName.isEmpty()) return null
         val idx = SKILL_NAMES.indexOfFirst { it.replace("　", "").trim() == bestName }
-        return (if (idx >= 0) idx else 0) to bestName
+        if (idx < 0) return null
+        return idx to bestName
     }
 
     private fun matchPoints(region: Array<IntArray>): Int? {
         if (region.isEmpty() || digitTmpls.isEmpty()) return null
         var bestN: Int? = null
-        var best = 0.36f
+        var best = 0.26f
         for ((n, g) in digitTmpls) {
             val s = ncc(region, g)
             if (s > best) {
@@ -132,7 +161,7 @@ object CharmTemplateReader {
     private fun matchSlots(region: Array<IntArray>): Int {
         if (region.isEmpty() || slotTmpls.isEmpty()) return -1
         var bestN = -1
-        var best = 0.30f
+        var best = 0.22f
         for ((n, g) in slotTmpls) {
             val s = ncc(region, g)
             if (s > best) {
@@ -141,6 +170,14 @@ object CharmTemplateReader {
             }
         }
         return bestN
+    }
+
+    private fun safeCrop(src: Bitmap, r: Rect): Bitmap {
+        val left = r.left.coerceIn(0, src.width - 1)
+        val top = r.top.coerceIn(0, src.height - 1)
+        val right = r.right.coerceIn(left + 1, src.width)
+        val bottom = r.bottom.coerceIn(top + 1, src.height)
+        return Bitmap.createBitmap(src, left, top, right - left, bottom - top)
     }
 
     private fun downscale(src: Bitmap, maxSide: Int): Bitmap {
@@ -233,10 +270,14 @@ object CharmTemplateReader {
         var use = tmpl
         if (th > ih || tw > iw) {
             val scale = min(ih.toFloat() / th, iw.toFloat() / tw)
-            if (scale < 0.3f) return -1f
+            if (scale < 0.25f) return -1f
             val sth = max(6, (th * scale).roundToInt())
             val stw = max(6, (tw * scale).roundToInt())
-            use = Array(sth) { y -> IntArray(stw) { x -> tmpl[(y * th / sth).coerceIn(0, th - 1)][(x * tw / stw).coerceIn(0, tw - 1)] } }
+            use = Array(sth) { y ->
+                IntArray(stw) { x ->
+                    tmpl[(y * th / sth).coerceIn(0, th - 1)][(x * tw / stw).coerceIn(0, tw - 1)]
+                }
+            }
             th = sth
             tw = stw
         }
@@ -254,7 +295,7 @@ object CharmTemplateReader {
         }
         if (tVar < 1e-3) return -1f
         var best = -1f
-        val step = max(1, min(maxX, maxY) / 10)
+        val step = max(1, min(maxX, maxY).coerceAtLeast(1) / 8)
         var oy = 0
         while (oy <= maxY) {
             var ox = 0
