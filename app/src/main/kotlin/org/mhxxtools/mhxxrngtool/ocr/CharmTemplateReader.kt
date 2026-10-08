@@ -1,36 +1,35 @@
 package org.mhxxtools.mhxxrngtool.ocr
 
+import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
+import android.graphics.BitmapFactory
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Rect
-import android.graphics.Typeface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * 鑑定画面をテンプレート照合で読む（OCRなし）。
- *
- * - パネル: 紫系UI枠を探索（画角ズレ・拡大縮小に対応するため複数スケール）
- * - スキル名: SKILL_NAMES をフォント描画したテンプレと正規化相互相関
- * - ポイント: 0〜9 / + の描画テンプレ
- * - スロット: 明部の円形ブロブ数
+ * assets/charm_templates の切り出しPNGで鑑定画面を照合する。
+ * スキル名が assets に無い場合だけフォント描画テンプレにフォールバックする。
  */
 object CharmTemplateReader {
 
-    data class ReadResult(
-        val charm: OcrCharm,
-        val note: String
-    )
+    data class ReadResult(val charm: OcrCharm, val note: String)
 
-    suspend fun read(bitmap: Bitmap): Result<ReadResult> = withContext(Dispatchers.Default) {
+    private data class Tmpl(val name: String, val gray: Array<IntArray>)
+
+    @Volatile private var loaded = false
+    private var skillTmpls: List<Tmpl> = emptyList()
+    private var digitTmpls: List<Pair<Int, Array<IntArray>>> = emptyList()
+    private var slotTmpls: List<Pair<Int, Array<IntArray>>> = emptyList()
+
+    suspend fun read(context: Context, bitmap: Bitmap): Result<ReadResult> = withContext(Dispatchers.Default) {
         runCatching {
+            ensureLoaded(context)
             val work = downscale(bitmap, 960)
             val panel = findPanel(work) ?: Rect(
                 (work.width * 0.28f).toInt(),
@@ -46,47 +45,102 @@ object CharmTemplateReader {
                 panel.height().coerceIn(1, work.height - panel.top)
             )
             val gray = toGray(crop)
-
-            // 上から: 名前行 / スキル1 / スキル2 / スロット
             val h = gray.height
-            val w = gray.width
-            val row1 = band(gray, (h * 0.18f).toInt(), (h * 0.38f).toInt())
-            val row2 = band(gray, (h * 0.38f).toInt(), (h * 0.58f).toInt())
+            val w = gray[0].size
+            val row1 = band(gray, (h * 0.22f).toInt(), (h * 0.46f).toInt())
+            val row2 = band(gray, (h * 0.42f).toInt(), (h * 0.66f).toInt())
             val rowSlot = band(gray, (h * 0.58f).toInt(), (h * 0.82f).toInt())
+            val nameW = (w * 0.68f).toInt()
+            val ptsL = (w * 0.62f).toInt()
 
-            // スキル名は行の左〜中央、ポイントは右端
-            val nameW = (w * 0.62f).toInt()
-            val ptsL = (w * 0.68f).toInt()
-            val s1Name = matchSkill(sub(row1, 0, nameW))
-            val s2Name = matchSkill(sub(row2, 0, nameW))
+            val s1 = matchSkill(sub(row1, 0, nameW))
+            val s2 = matchSkill(sub(row2, 0, nameW))
             val p1 = matchPoints(sub(row1, ptsL, w - ptsL))
             val p2 = matchPoints(sub(row2, ptsL, w - ptsL))
-            val slots = countSlots(rowSlot)
+            val slots = matchSlots(rowSlot)
 
             val skills = mutableListOf<OcrSkill>()
-            if (s1Name != null && p1 != null) {
-                skills += OcrSkill(s1Name.first, s1Name.second, p1)
-            }
-            if (s2Name != null && p2 != null && p2 != 0) {
-                skills += OcrSkill(s2Name.first, s2Name.second, p2)
-            }
-
-            // 行全体からポイントが取れなかった場合、名前マッチだけでも候補に
-            if (skills.isEmpty() && s1Name != null) {
-                skills += OcrSkill(s1Name.first, s1Name.second, p1 ?: 0)
-            }
-
-            val kind = -1
-            val note = buildString {
-                append("template panel=${panel.width()}x${panel.height()}")
-                append(" s1=${s1Name?.second ?: "?"}($p1)")
-                append(" s2=${s2Name?.second ?: "?"}($p2)")
-                append(" slot=$slots")
-            }
+            if (s1 != null) skills += OcrSkill(s1.first, s1.second, p1 ?: 0)
+            if (s2 != null && (p2 ?: 0) > 0) skills += OcrSkill(s2.first, s2.second, p2 ?: 0)
+            val note = "assets skills=${skillTmpls.size} digits=${digitTmpls.size} slots=${slotTmpls.size} " +
+                "s1=${s1?.second ?: "?"}($p1) s2=${s2?.second ?: "?"}($p2) slot=$slots"
             if (work !== bitmap) work.recycle()
             crop.recycle()
-            ReadResult(OcrCharm(kind, slots, skills), note)
+            ReadResult(OcrCharm(-1, slots, skills), note)
         }
+    }
+
+    private fun ensureLoaded(context: Context) {
+        if (loaded) return
+        synchronized(this) {
+            if (loaded) return
+            skillTmpls = loadDir(context, "charm_templates/skills").map { (name, g) ->
+                Tmpl(name.removeSuffix(".png"), g)
+            }
+            digitTmpls = loadDir(context, "charm_templates/digits").mapNotNull { (name, g) ->
+                val n = name.removePrefix("plus").removeSuffix(".png").toIntOrNull() ?: return@mapNotNull null
+                n to g
+            }
+            slotTmpls = loadDir(context, "charm_templates/slots").mapNotNull { (name, g) ->
+                val n = name.removePrefix("slot").removeSuffix(".png").toIntOrNull() ?: return@mapNotNull null
+                n to g
+            }
+            loaded = true
+        }
+    }
+
+    private fun loadDir(context: Context, dir: String): List<Pair<String, Array<IntArray>>> {
+        val names = context.assets.list(dir).orEmpty()
+        return names.mapNotNull { name ->
+            val bmp = context.assets.open("$dir/$name").use { BitmapFactory.decodeStream(it) } ?: return@mapNotNull null
+            val g = toGray(bmp)
+            bmp.recycle()
+            name to g
+        }
+    }
+
+    private fun matchSkill(region: Array<IntArray>): Pair<Int, String>? {
+        if (region.isEmpty()) return null
+        var bestName = ""
+        var best = 0.38f
+        for (t in skillTmpls) {
+            val s = ncc(region, t.gray)
+            if (s > best) {
+                best = s
+                bestName = t.name
+            }
+        }
+        if (bestName.isEmpty()) return null
+        val idx = SKILL_NAMES.indexOfFirst { it.replace("　", "").trim() == bestName }
+        return (if (idx >= 0) idx else 0) to bestName
+    }
+
+    private fun matchPoints(region: Array<IntArray>): Int? {
+        if (region.isEmpty() || digitTmpls.isEmpty()) return null
+        var bestN: Int? = null
+        var best = 0.36f
+        for ((n, g) in digitTmpls) {
+            val s = ncc(region, g)
+            if (s > best) {
+                best = s
+                bestN = n
+            }
+        }
+        return bestN
+    }
+
+    private fun matchSlots(region: Array<IntArray>): Int {
+        if (region.isEmpty() || slotTmpls.isEmpty()) return -1
+        var bestN = -1
+        var best = 0.30f
+        for ((n, g) in slotTmpls) {
+            val s = ncc(region, g)
+            if (s > best) {
+                best = s
+                bestN = n
+            }
+        }
+        return bestN
     }
 
     private fun downscale(src: Bitmap, maxSide: Int): Bitmap {
@@ -101,21 +155,17 @@ object CharmTemplateReader {
         )
     }
 
-    /** 紫〜ピンク系の枠が多い矩形をパネル候補にする */
     private fun findPanel(bmp: Bitmap): Rect? {
         val w = bmp.width
         val h = bmp.height
         val step = max(4, min(w, h) / 80)
         var bestScore = 0
         var best: Rect? = null
-        // 画面中央寄りの探索窓
-        val x0 = w / 8
-        val x1 = w * 7 / 8
-        val y0 = h / 20
+        var y = h / 20
         val y1 = h * 55 / 100
-        var y = y0
         while (y < y1) {
-            var x = x0
+            var x = w / 8
+            val x1 = w * 7 / 8
             while (x < x1) {
                 val ww = min(w * 45 / 100, x1 - x)
                 val hh = min(h * 35 / 100, y1 - y)
@@ -130,7 +180,6 @@ object CharmTemplateReader {
                             val r = Color.red(c)
                             val g = Color.green(c)
                             val b = Color.blue(c)
-                            // 鑑定パネルの紫枠・紫背景
                             if (b > 80 && r > 60 && b > g && r > g - 20) score++
                             n++
                             xx += step
@@ -154,11 +203,9 @@ object CharmTemplateReader {
         val w = src.width
         val h = src.height
         val out = Array(h) { IntArray(w) }
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val c = src.getPixel(x, y)
-                out[y][x] = (Color.red(c) * 30 + Color.green(c) * 59 + Color.blue(c) * 11) / 100
-            }
+        for (y in 0 until h) for (x in 0 until w) {
+            val c = src.getPixel(x, y)
+            out[y][x] = (Color.red(c) * 30 + Color.green(c) * 59 + Color.blue(c) * 11) / 100
         }
         return out
     }
@@ -177,159 +224,37 @@ object CharmTemplateReader {
         return Array(gray.size) { y -> gray[y].copyOfRange(l, l + rw) }
     }
 
-    private fun matchSkill(region: Array<IntArray>): Pair<Int, String>? {
-        if (region.isEmpty() || region[0].isEmpty()) return null
-        val rh = region.size
-        val rw = region[0].size
-        // テンプレ高さは領域の 55〜90%
-        val th = (rh * 0.72f).roundToInt().coerceIn(12, 48)
-        var bestIdx = -1
-        var bestName = ""
-        var bestScore = 0.42f
-        for (i in SKILL_NAMES.indices) {
-            val name = SKILL_NAMES[i].replace("　", "").trim()
-            if (name.isEmpty() || name.length > 10) continue
-            val tmpl = renderTextTemplate(name, th)
-            val score = ncc(region, tmpl)
-            if (score > bestScore) {
-                bestScore = score
-                bestIdx = i
-                bestName = name
-            }
-        }
-        return if (bestIdx >= 0) bestIdx to bestName else null
-    }
-
-    private fun matchPoints(region: Array<IntArray>): Int? {
-        if (region.isEmpty() || region[0].isEmpty()) return null
-        val rh = region.size
-        val th = (rh * 0.75f).roundToInt().coerceIn(12, 40)
-        // +N or N
-        var bestPts: Int? = null
-        var best = 0.40f
-        for (n in 1..20) {
-            for (label in listOf("+$n", n.toString(), "＋$n")) {
-                val tmpl = renderTextTemplate(label, th)
-                val s = ncc(region, tmpl)
-                if (s > best) {
-                    best = s
-                    bestPts = n
-                }
-            }
-        }
-        return bestPts
-    }
-
-    private fun countSlots(region: Array<IntArray>): Int {
-        if (region.isEmpty() || region[0].isEmpty()) return -1
-        val h = region.size
-        val w = region[0].size
-        // 明度の高い画素の連結（簡易）
-        val bin = Array(h) { y -> BooleanArray(w) { x -> region[y][x] > 175 } }
-        var blobs = 0
-        val vis = Array(h) { BooleanArray(w) }
-        val qx = IntArray(w * h)
-        val qy = IntArray(w * h)
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                if (!bin[y][x] || vis[y][x]) continue
-                var qs = 0
-                var qe = 0
-                qx[qe] = x; qy[qe] = y; qe++
-                vis[y][x] = true
-                var count = 0
-                var minX = x; var maxX = x; var minY = y; var maxY = y
-                while (qs < qe) {
-                    val cx = qx[qs]; val cy = qy[qs]; qs++
-                    count++
-                    minX = min(minX, cx); maxX = max(maxX, cx)
-                    minY = min(minY, cy); maxY = max(maxY, cy)
-                    for (dy in -1..1) for (dx in -1..1) {
-                        val nx = cx + dx; val ny = cy + dy
-                        if (nx !in 0 until w || ny !in 0 until h) continue
-                        if (vis[ny][nx] || !bin[ny][nx]) continue
-                        vis[ny][nx] = true
-                        qx[qe] = nx; qy[qe] = ny; qe++
-                    }
-                }
-                val bw = maxX - minX + 1
-                val bh = maxY - minY + 1
-                // スロット○相当のサイズ・丸さ
-                if (count in 12..900 && bw in 4..40 && bh in 4..40 && abs(bw - bh) <= 12) {
-                    blobs++
-                }
-            }
-        }
-        return when {
-            blobs <= 0 -> 0
-            blobs >= 3 -> 3
-            else -> blobs
-        }
-    }
-
-    private fun renderTextTemplate(text: String, height: Int): Array<IntArray> {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = height * 0.85f
-            typeface = Typeface.DEFAULT_BOLD
-            isFakeBoldText = true
-        }
-        val width = max(8, (paint.measureText(text) + 4).roundToInt())
-        val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        canvas.drawColor(Color.BLACK)
-        val fm = paint.fontMetrics
-        val ty = height / 2f - (fm.ascent + fm.descent) / 2f
-        canvas.drawText(text, 2f, ty, paint)
-        val g = toGray(bmp)
-        bmp.recycle()
-        return g
-    }
-
-    /** 正規化相互相関（高いほど一致） */
     private fun ncc(image: Array<IntArray>, tmpl: Array<IntArray>): Float {
         if (image.isEmpty() || tmpl.isEmpty()) return -1f
         val ih = image.size
         val iw = image[0].size
-        val th = tmpl.size
-        val tw = tmpl[0].size
+        var th = tmpl.size
+        var tw = tmpl[0].size
+        var use = tmpl
         if (th > ih || tw > iw) {
-            // テンプレが大きいときは縮小
             val scale = min(ih.toFloat() / th, iw.toFloat() / tw)
-            if (scale < 0.35f) return -1f
+            if (scale < 0.3f) return -1f
             val sth = max(6, (th * scale).roundToInt())
             val stw = max(6, (tw * scale).roundToInt())
-            val st = Array(sth) { y ->
-                IntArray(stw) { x ->
-                    tmpl[(y * th / sth).coerceIn(0, th - 1)][(x * tw / stw).coerceIn(0, tw - 1)]
-                }
-            }
-            return nccSame(image, st)
+            use = Array(sth) { y -> IntArray(stw) { x -> tmpl[(y * th / sth).coerceIn(0, th - 1)][(x * tw / stw).coerceIn(0, tw - 1)] } }
+            th = sth
+            tw = stw
         }
-        return nccSame(image, tmpl)
-    }
-
-    private fun nccSame(image: Array<IntArray>, tmpl: Array<IntArray>): Float {
-        val ih = image.size
-        val iw = image[0].size
-        val th = tmpl.size
-        val tw = tmpl[0].size
         val maxY = ih - th
         val maxX = iw - tw
         if (maxY < 0 || maxX < 0) return -1f
-        // テンプレ平均
-        var tSum = 0L
         val n = th * tw
-        for (y in 0 until th) for (x in 0 until tw) tSum += tmpl[y][x]
+        var tSum = 0L
+        for (y in 0 until th) for (x in 0 until tw) tSum += use[y][x]
         val tMean = tSum.toDouble() / n
         var tVar = 0.0
         for (y in 0 until th) for (x in 0 until tw) {
-            val d = tmpl[y][x] - tMean
+            val d = use[y][x] - tMean
             tVar += d * d
         }
         if (tVar < 1e-3) return -1f
         var best = -1f
-        val step = max(1, min(maxX, maxY) / 12)
+        val step = max(1, min(maxX, maxY) / 10)
         var oy = 0
         while (oy <= maxY) {
             var ox = 0
@@ -341,8 +266,7 @@ object CharmTemplateReader {
                 var iVar = 0.0
                 for (y in 0 until th) for (x in 0 until tw) {
                     val id = image[oy + y][ox + x] - iMean
-                    val td = tmpl[y][x] - tMean
-                    num += id * td
+                    num += id * (use[y][x] - tMean)
                     iVar += id * id
                 }
                 if (iVar > 1e-3) {
