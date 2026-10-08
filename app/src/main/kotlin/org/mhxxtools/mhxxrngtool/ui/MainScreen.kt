@@ -1,6 +1,6 @@
 package org.mhxxtools.mhxxrngtool.ui
 
-import android.widget.Toast
+import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -10,6 +10,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,10 +25,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
 import org.mhxxtools.mhxxrngtool.AppStateViewModel
 import org.mhxxtools.mhxxrngtool.rng.KIND_NAMES
 import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointScreen
 import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointViewModel
+import org.mhxxtools.mhxxrngtool.ui.arduino.ArduinoScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundViewModel
 import org.mhxxtools.mhxxrngtool.ui.combo.ComboScreen
@@ -38,8 +44,11 @@ import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
+import org.mhxxtools.mhxxrngtool.voice.VoiceCommandController
+import org.mhxxtools.mhxxrngtool.voice.VoiceState
+import org.mhxxtools.mhxxrngtool.voice.buildAppVoiceCommands
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "Arduino")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -52,55 +61,45 @@ fun MainScreen(appState: AppStateViewModel) {
     val timerVm: TimerViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val context = LocalContext.current
-    var listening by remember { mutableStateOf(false) }
-    val micPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) listening = true
-        else Toast.makeText(context, "マイクの許可が必要です", Toast.LENGTH_SHORT).show()
-    }
-
-    LaunchedEffect(listening) {
-        if (!listening) return@LaunchedEffect
-        VoiceCommands.listen(
-            context,
-            onText = { said ->
-                listening = false
-                val action = VoiceCommands.parse(said)
-                if (action == null) {
-                    Toast.makeText(context, "認識: $said（対応コマンドではありません）", Toast.LENGTH_LONG).show()
-                } else {
-                    action.kind?.let { appState.setKind(it) }
-                    action.tab?.let { selectedTab = it }
-                    when (action.run) {
-                        "search" -> {
-                            selectedTab = action.tab ?: 0
-                            if ((action.tab ?: 0) == 2) comboVm.startSearch() else searchVm.startSearch()
-                        }
-                        "analyze" -> {
-                            selectedTab = 2
-                            comboVm.startAnalysis()
-                        }
-                        "start" -> when (action.tab ?: selectedTab) {
-                            6 -> timerVm.startCountdown()
-                            2 -> comboVm.startAnalysis()
-                            5 -> Toast.makeText(context, "鑑定は画像を選んでください", Toast.LENGTH_SHORT).show()
-                            else -> searchVm.startSearch()
-                        }
-                    }
-                    Toast.makeText(context, "音声: $said", Toast.LENGTH_SHORT).show()
-                }
-            },
-            onError = {
-                listening = false
-                Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
+    var arduinoFrame by remember { mutableStateOf<Long?>(null) }
+    var arduinoCharm by remember { mutableStateOf("") }
 
     LaunchedEffect(appState.kind) {
         searchVm.onKindChanged(appState.kind)
+    }
+
+    // ── 音声コマンド (Google 音声入力と連携) ──────────────────────────
+    // 「種類」チップの右端のマイクボタンから、タブ移動・種類切替・検索/タイマー操作
+    // などアプリの主要機能を音声で呼び出せる。コマンド定義は voice/AppVoiceCommands.kt。
+    val context = LocalContext.current
+    val voiceCommands = remember {
+        buildAppVoiceCommands(
+            appState = appState,
+            searchVm = searchVm,
+            timerVm = timerVm,
+            onSelectTab = { selectedTab = it }
+        )
+    }
+    val voiceController = remember {
+        VoiceCommandController(context) { heard ->
+            voiceCommands.dispatch(heard)?.let { "✓ $it" }
+                ?: "「$heard」に対応するコマンドが見つかりませんでした"
+        }
+    }
+    val voiceAvailable = remember { voiceController.isAvailable }
+    DisposableEffect(Unit) {
+        onDispose { voiceController.destroy() }
+    }
+    val recordAudioPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) voiceController.start() else voiceController.onPermissionDenied()
+    }
+    LaunchedEffect(voiceController.statusMessage, voiceController.state) {
+        if (voiceController.state == VoiceState.IDLE && voiceController.statusMessage.isNotBlank()) {
+            delay(4000)
+            voiceController.clearStatus()
+        }
     }
 
     Column(
@@ -158,13 +157,28 @@ fun MainScreen(appState: AppStateViewModel) {
                         onClick = { appState.setKind(idx) }
                     )
                 }
+
                 Spacer(Modifier.weight(1f))
-                HtmlChip(
-                    label = if (listening) "聞き取り中" else "音声",
-                    selected = listening,
+
+                VoiceMicButton(
+                    state = voiceController.state,
+                    enabled = voiceAvailable,
                     onClick = {
-                        micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                        if (voiceController.state == VoiceState.IDLE) {
+                            recordAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        } else {
+                            voiceController.cancel()
+                        }
                     }
+                )
+            }
+
+            if (voiceController.statusMessage.isNotBlank()) {
+                Text(
+                    voiceController.statusMessage,
+                    fontSize = 11.sp,
+                    color = HtmlColors.Accent,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
@@ -204,7 +218,8 @@ fun MainScreen(appState: AppStateViewModel) {
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 6
+                        arduinoFrame = frame
+                        selectedTab = 7
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
@@ -212,6 +227,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = comboVm,
                     onResultTap = { frame ->
                         timerVm.setCurrentPosFrame(frame)
+                        arduinoFrame = frame
                         selectedTab = 6
                     }
                 )
@@ -231,10 +247,23 @@ fun MainScreen(appState: AppStateViewModel) {
                     },
                     onFrameTap = { frame ->
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 6
+                        arduinoFrame = frame
+                        selectedTab = 7
                     }
                 )
                 6 -> TimerScreen(vm = timerVm)
+                7 -> ArduinoScreen(
+                    vm = searchVm,
+                    kind = appState.kind,
+                    onKind = { appState.setKind(it) },
+                    targetFrame = arduinoFrame,
+                    charmLabel = arduinoCharm,
+                    onPick = { frame, label ->
+                        arduinoFrame = frame
+                        arduinoCharm = label
+                        timerVm.setTargetFrame(frame)
+                    }
+                )
             }
         }
     }
@@ -275,6 +304,27 @@ private fun HtmlTab(title: String, selected: Boolean, onClick: () -> Unit) {
                 .width(28.dp)
                 .height(2.dp)
                 .background(if (selected) HtmlColors.Accent else Color.Transparent)
+        )
+    }
+}
+
+@Composable
+private fun VoiceMicButton(state: VoiceState, enabled: Boolean, onClick: () -> Unit) {
+    val listening = state == VoiceState.LISTENING
+    val tint = when {
+        !enabled -> HtmlColors.Border
+        listening -> Color(0xFFE05252)
+        else -> HtmlColors.Muted
+    }
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(28.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Mic,
+            contentDescription = if (listening) "音声コマンド 聞き取り中（タップで停止）" else "音声コマンドを開始",
+            tint = tint
         )
     }
 }
