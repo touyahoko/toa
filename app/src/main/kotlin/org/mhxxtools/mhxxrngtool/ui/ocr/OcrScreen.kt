@@ -73,9 +73,11 @@ fun OcrScreen(
                     Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("📷 鑑定読取", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("🔮 AI護石フレーム検索", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Text(
-                        "Switchの画面を撮影するだけで\nスキル・スロットを認識し、何フレーム目に出現するか自動計算します。",
+                        "ゲーム画面を撮影するだけでOK！\n" +
+                            "写真から護石のスキル・スロットを認識し、出現フレームを特定します。\n" +
+                            "（端末内処理・通信なし・追加料金なし）",
                         fontSize = 12.sp,
                         color    = MaterialTheme.colorScheme.onSurfaceVariant
                     )

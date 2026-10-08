@@ -65,7 +65,7 @@ class OcrViewModel : ViewModel() {
         userKind: Int = -1
     ) {
         searchJob?.cancel()
-        _state.update { OcrUiState(isProcessing = true, ocrStatus = "OCR+テンプレ照合中…") }
+        _state.update { OcrUiState(isProcessing = true, ocrStatus = "AI護石認識中（端末内）…") }
 
         viewModelScope.launch {
             // ハイブリッド: ML Kit OCR（スキル名）+ テンプレ（ポイント/スロット/検証）
