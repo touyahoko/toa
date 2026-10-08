@@ -45,7 +45,7 @@ object CharmTemplateReader {
                 panel.height().coerceIn(1, work.height - panel.top)
             )
             val gray = toGray(crop)
-            val h = gray.height
+            val h = gray.size
             val w = gray[0].size
             val row1 = band(gray, (h * 0.22f).toInt(), (h * 0.46f).toInt())
             val row2 = band(gray, (h * 0.42f).toInt(), (h * 0.66f).toInt())
