@@ -1,5 +1,8 @@
 package org.mhxxtools.mhxxrngtool.ui
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +55,53 @@ fun MainScreen(appState: AppStateViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var arduinoFrame by remember { mutableStateOf<Long?>(null) }
     var arduinoCharm by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    var listening by remember { mutableStateOf(false) }
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) listening = true
+        else Toast.makeText(context, "マイクの許可が必要です", Toast.LENGTH_SHORT).show()
+    }
+
+    LaunchedEffect(listening) {
+        if (!listening) return@LaunchedEffect
+        VoiceCommands.listen(
+            context,
+            onText = { said ->
+                listening = false
+                val action = VoiceCommands.parse(said)
+                if (action == null) {
+                    Toast.makeText(context, "未対応: $said", Toast.LENGTH_SHORT).show()
+                } else {
+                    action.kind?.let { appState.setKind(it) }
+                    action.tab?.let { selectedTab = it }
+                    when (action.run) {
+                        "search" -> {
+                            selectedTab = action.tab ?: 0
+                            if ((action.tab ?: 0) == 2) comboVm.startSearch() else searchVm.startSearch()
+                        }
+                        "analyze" -> {
+                            selectedTab = 2
+                            comboVm.startAnalysis()
+                        }
+                        "start" -> when (action.tab ?: selectedTab) {
+                            6 -> timerVm.startCountdown()
+                            2 -> comboVm.startAnalysis()
+                            5 -> Toast.makeText(context, "鑑定は画像を選んでください", Toast.LENGTH_SHORT).show()
+                            7 -> Toast.makeText(context, "Arduinoタブを開きました", Toast.LENGTH_SHORT).show()
+                            else -> searchVm.startSearch()
+                        }
+                    }
+                    Toast.makeText(context, "音声: $said", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onError = {
+                listening = false
+                Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
 
     LaunchedEffect(appState.kind) {
         searchVm.onKindChanged(appState.kind)
@@ -111,6 +162,14 @@ fun MainScreen(appState: AppStateViewModel) {
                         onClick = { appState.setKind(idx) }
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                HtmlChip(
+                    label = if (listening) "聞き取り中" else "音声",
+                    selected = listening,
+                    onClick = {
+                        micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+                    }
+                )
             }
 
             Spacer(Modifier.height(2.dp))
