@@ -10,8 +10,7 @@ import org.mhxxtools.mhxxrngtool.ocr.AndroidOcr
 import org.mhxxtools.mhxxrngtool.ocr.CharmTemplateReader
 import org.mhxxtools.mhxxrngtool.ocr.OcrCharm
 import org.mhxxtools.mhxxrngtool.ocr.inferKindFromSkills
-import org.mhxxtools.mhxxrngtool.ocr.parseOcrCharm
-import org.mhxxtools.mhxxrngtool.ocr.parseSlotCrop
+
 import org.mhxxtools.mhxxrngtool.rng.*
 
 data class OcrUiState(
@@ -68,45 +67,26 @@ class OcrViewModel : ViewModel() {
         _state.update { OcrUiState(isProcessing = true, ocrStatus = "テンプレート照合中…") }
 
         viewModelScope.launch {
-            // テンプレート照合（紫パネル検出 + スキル名/数字/スロット）
-            // 失敗時のみ従来 OCR にフォールバック
+            // テンプレート照合のみ（OCRは使わない）
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch
             }
-            var charm: OcrCharm
-            var slots: Int
-            var debugNote: String
             val templ = CharmTemplateReader.read(context, bmp)
-            if (templ.isSuccess && templ.getOrNull()!!.charm.skills.isNotEmpty()) {
-                val r = templ.getOrNull()!!
-                charm = r.charm
-                slots = r.charm.slots
-                debugNote = r.note
-            } else {
-                val (rawText, detectNote) = AndroidOcr.recognizeAppraisal(bmp).getOrElse { e ->
-                    bmp.recycle()
-                    setError("読取エラー: ${e.message}"); return@launch
-                }
-                if (rawText.isBlank()) {
-                    bmp.recycle()
-                    setError("お守り情報を検出できませんでした。\n鑑定結果パネルが写っている写真を使用してください。\n($detectNote)")
-                    return@launch
-                }
-                charm = parseOcrCharm(rawText)
-                val slotFromCrop = parseSlotCrop(rawText)
-                slots = when {
-                    slotFromCrop != null -> slotFromCrop
-                    charm.slots in 0..3 -> charm.slots
-                    else -> -1
-                }
-                debugNote = "ocr-fallback $detectNote"
-                if (charm.skills.isEmpty()) {
-                    bmp.recycle()
-                    setError("スキルを認識できませんでした。\n($debugNote / OCR='$rawText')")
-                    return@launch
-                }
-            }
             bmp.recycle()
+            val r = templ.getOrElse { e ->
+                setError("テンプレ照合エラー: ${e.message}"); return@launch
+            }
+            val charm = r.charm
+            val slots = r.charm.slots
+            val debugNote = r.note
+            if (charm.skills.isEmpty()) {
+                setError(
+                    "スキルを認識できませんでした。\n" +
+                        "assets/charm_templates に対象スキルのPNGがあるか確認してください。\n" +
+                        "($debugNote)"
+                )
+                return@launch
+            }
 
             val skill1 = charm.skills[0]
             val skill2 = charm.skills.getOrNull(1)
