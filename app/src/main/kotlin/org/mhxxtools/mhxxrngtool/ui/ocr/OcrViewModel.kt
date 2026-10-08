@@ -7,7 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.mhxxtools.mhxxrngtool.ocr.AndroidOcr
-import org.mhxxtools.mhxxrngtool.ocr.CharmTemplateReader
+import org.mhxxtools.mhxxrngtool.ocr.HybridCharmReader
 import org.mhxxtools.mhxxrngtool.ocr.OcrCharm
 import org.mhxxtools.mhxxrngtool.ocr.inferKindFromSkills
 
@@ -64,17 +64,17 @@ class OcrViewModel : ViewModel() {
         userKind: Int = -1
     ) {
         searchJob?.cancel()
-        _state.update { OcrUiState(isProcessing = true, ocrStatus = "テンプレート照合中…") }
+        _state.update { OcrUiState(isProcessing = true, ocrStatus = "OCR+テンプレ照合中…") }
 
         viewModelScope.launch {
-            // テンプレート照合のみ（OCRは使わない）
+            // ハイブリッド: ML Kit OCR（スキル名）+ テンプレ（ポイント/スロット/検証）
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch
             }
-            val templ = CharmTemplateReader.read(context, bmp)
+            val hybrid = HybridCharmReader.read(context, bmp)
             bmp.recycle()
-            val r = templ.getOrElse { e ->
-                setError("テンプレ照合エラー: ${e.message}"); return@launch
+            val r = hybrid.getOrElse { e ->
+                setError("認識エラー: ${e.message}"); return@launch
             }
             val charm = r.charm
             val slots = r.charm.slots
@@ -82,7 +82,7 @@ class OcrViewModel : ViewModel() {
             if (charm.skills.isEmpty()) {
                 setError(
                     "スキルを認識できませんでした。\n" +
-                        "assets/charm_templates に対象スキルのPNGがあるか確認してください。\n" +
+                        "鑑定パネル全体が写るように撮影してください。\n" +
                         "($debugNote)"
                 )
                 return@launch
