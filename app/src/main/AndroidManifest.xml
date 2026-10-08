@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 音声コマンド: Google 音声入力 (SpeechRecognizer) 用 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Camera: OCR撮影 / UVC キャプチャーカード -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Gallery access -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- 動画解析機能: Android 13+ で動画ファイルアクセスに必要 -->
@@ -20,6 +20,13 @@
     <!-- USB Host (runtime権限不要, feature宣言のみ) -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- Android 11+ のパッケージ可視性制限: 音声認識サービスを検出できるようにする -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="true"
