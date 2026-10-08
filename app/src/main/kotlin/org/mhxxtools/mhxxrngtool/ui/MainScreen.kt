@@ -25,7 +25,6 @@ import org.mhxxtools.mhxxrngtool.AppStateViewModel
 import org.mhxxtools.mhxxrngtool.rng.KIND_NAMES
 import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointScreen
 import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointViewModel
-import org.mhxxtools.mhxxrngtool.ui.arduino.ArduinoScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundViewModel
 import org.mhxxtools.mhxxrngtool.ui.combo.ComboScreen
@@ -40,7 +39,7 @@ import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "Arduino")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -53,8 +52,6 @@ fun MainScreen(appState: AppStateViewModel) {
     val timerVm: TimerViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    var arduinoFrame by remember { mutableStateOf<Long?>(null) }
-    var arduinoCharm by remember { mutableStateOf("") }
     val context = LocalContext.current
     var listening by remember { mutableStateOf(false) }
     val micPermission = rememberLauncherForActivityResult(
@@ -72,7 +69,7 @@ fun MainScreen(appState: AppStateViewModel) {
                 listening = false
                 val action = VoiceCommands.parse(said)
                 if (action == null) {
-                    Toast.makeText(context, "未対応: $said", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "認識: $said（対応コマンドではありません）", Toast.LENGTH_LONG).show()
                 } else {
                     action.kind?.let { appState.setKind(it) }
                     action.tab?.let { selectedTab = it }
@@ -89,7 +86,6 @@ fun MainScreen(appState: AppStateViewModel) {
                             6 -> timerVm.startCountdown()
                             2 -> comboVm.startAnalysis()
                             5 -> Toast.makeText(context, "鑑定は画像を選んでください", Toast.LENGTH_SHORT).show()
-                            7 -> Toast.makeText(context, "Arduinoタブを開きました", Toast.LENGTH_SHORT).show()
                             else -> searchVm.startSearch()
                         }
                     }
@@ -208,8 +204,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
                         timerVm.setTargetFrame(frame)
-                        arduinoFrame = frame
-                        selectedTab = 7
+                        selectedTab = 6
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
@@ -217,7 +212,6 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = comboVm,
                     onResultTap = { frame ->
                         timerVm.setCurrentPosFrame(frame)
-                        arduinoFrame = frame
                         selectedTab = 6
                     }
                 )
@@ -237,23 +231,10 @@ fun MainScreen(appState: AppStateViewModel) {
                     },
                     onFrameTap = { frame ->
                         timerVm.setTargetFrame(frame)
-                        arduinoFrame = frame
-                        selectedTab = 7
+                        selectedTab = 6
                     }
                 )
                 6 -> TimerScreen(vm = timerVm)
-                7 -> ArduinoScreen(
-                    vm = searchVm,
-                    kind = appState.kind,
-                    onKind = { appState.setKind(it) },
-                    targetFrame = arduinoFrame,
-                    charmLabel = arduinoCharm,
-                    onPick = { frame, label ->
-                        arduinoFrame = frame
-                        arduinoCharm = label
-                        timerVm.setTargetFrame(frame)
-                    }
-                )
             }
         }
     }

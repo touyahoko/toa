@@ -35,8 +35,6 @@ object VoiceCommands {
         "ねらいめ" to "狙い目", "狙い" to "狙い目", "ねらい" to "狙い目", "ネライメ" to "狙い目",
         "かんてい" to "鑑定", "鑑定タブ" to "鑑定", "官邸" to "鑑定", "カンテイ" to "鑑定",
         "たいまー" to "タイマー", "タイマ" to "タイマー", "タイマー" to "タイマー",
-        "あるでゅいーの" to "Arduino", "アルデュイノ" to "Arduino", "アルディーノ" to "Arduino",
-        "あるでぃーの" to "Arduino", "アルデューノ" to "Arduino", "あーでゅいの" to "Arduino",
         "かいせき" to "解析", "カイセキ" to "解析",
         "じっこう" to "実行", "スタート" to "開始", "はじめ" to "開始",
         "さがして" to "探して", "探して" to "探して"
@@ -45,7 +43,7 @@ object VoiceCommands {
     /** アプリで受け付ける語彙（短いほど優先しやすい） */
     private val VOCAB = listOf(
         "風化", "古び", "光る", "なぞ",
-        "検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "Arduino",
+        "検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー",
         "解析", "検索して", "検索開始", "探して", "開始", "実行", "スタート"
     )
 
@@ -74,7 +72,6 @@ object VoiceCommands {
             t.contains("なぞ") -> kind = 3
         }
         when {
-            t.contains("Arduino") || t.contains("アルディーノ") || t.contains("アルデュイノ") -> tab = 7
             t.contains("タイマー") -> tab = 6
             t.contains("鑑定") -> tab = 5
             t.contains("狙い") -> tab = 4
@@ -169,7 +166,7 @@ object VoiceCommands {
             putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 8)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "例: 風化、検索、調合を解析")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "例: 風化、検索、調合、鑑定")
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
             // 短く話す想定。無音で切りすぎないよう少し長め
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
