@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.mhxxtools.mhxxrngtool.ocr.AndroidOcr
 import org.mhxxtools.mhxxrngtool.ocr.HybridCharmReader
+import org.mhxxtools.mhxxrngtool.ocr.CharmLearningModel
 import org.mhxxtools.mhxxrngtool.ocr.OcrCharm
 import org.mhxxtools.mhxxrngtool.ocr.inferKindFromSkills
 
@@ -241,6 +242,17 @@ class OcrViewModel : ViewModel() {
 
                 val finalList = hits.values.take(DISPLAY_CAP)
                 val total = hits.size
+                // 完全一致が出たら学習モデルに成功例を記録
+                if (total > 0) {
+                    CharmLearningModel.recordSuccess(
+                        context,
+                        OcrCharm(
+                            kind = inferred,
+                            slots = slots,
+                            skills = listOfNotNull(skill1, skill2)
+                        )
+                    )
+                }
                 withContext(Dispatchers.Main) {
                     _state.update {
                         it.copy(
