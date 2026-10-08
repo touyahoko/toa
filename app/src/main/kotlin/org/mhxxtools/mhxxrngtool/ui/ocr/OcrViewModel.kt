@@ -76,7 +76,7 @@ class OcrViewModel : ViewModel() {
             var charm: OcrCharm
             var slots: Int
             var debugNote: String
-            val templ = CharmTemplateReader.read(bmp)
+            val templ = CharmTemplateReader.read(context, bmp)
             if (templ.isSuccess && templ.getOrNull()!!.charm.skills.isNotEmpty()) {
                 val r = templ.getOrNull()!!
                 charm = r.charm
