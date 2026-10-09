@@ -38,7 +38,6 @@ import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.capture.CaptureScreen
-import org.mhxxtools.mhxxrngtool.ui.capture.CaptureViewModel
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
 
 private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "キャプチャ", "タイマー")
@@ -52,7 +51,6 @@ fun MainScreen(appState: AppStateViewModel) {
     val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
-    val captureVm: CaptureViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -238,13 +236,9 @@ fun MainScreen(appState: AppStateViewModel) {
                     }
                 )
                 6 -> CaptureScreen(
-                    vm = captureVm,
-                    onSnapshotForOcr = { jpeg ->
-                        // 一時ファイルにして鑑定へ
-                        val f = java.io.File(context.cacheDir, "capture_snap.jpg")
-                        f.writeBytes(jpeg)
+                    onSnapshotFile = { file ->
                         val uri = androidx.core.content.FileProvider.getUriForFile(
-                            context, "${context.packageName}.provider", f
+                            context, "${context.packageName}.provider", file
                         )
                         ocrVm.recognizeFromUri(context, uri, appState.kind)
                         selectedTab = 5
