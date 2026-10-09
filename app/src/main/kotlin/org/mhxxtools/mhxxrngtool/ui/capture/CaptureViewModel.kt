@@ -1,5 +1,7 @@
 package org.mhxxtools.mhxxrngtool.ui.capture
 
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageFormat
@@ -51,6 +53,7 @@ data class CaptureUiState(
  * 接続例:
  *   Switch(ドック HDMI) → キャプチャボード HDMI-IN → USB → スマホ (OTG)
  */
+@OptIn(ExperimentalCamera2Interop::class)
 class CaptureViewModel : ViewModel() {
 
     private val _state = MutableStateFlow(CaptureUiState())
@@ -120,7 +123,7 @@ class CaptureViewModel : ViewModel() {
             .setResolutionSelector(resolutionSelector)
         trySetFps(previewBuilder)
         val preview = previewBuilder.build().also {
-            it.surfaceProvider = previewView.surfaceProvider
+            it.setSurfaceProvider(previewView.surfaceProvider)
         }
 
         // Analysis @ high rate
