@@ -55,11 +55,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("androidx.navigation:navigation-compose:2.8.0")
 
-    // CameraX for USB UVC capture card stream
-    implementation("androidx.camera:camera-core:1.3.4")
-    implementation("androidx.camera:camera-camera2:1.3.4")
-    implementation("androidx.camera:camera-lifecycle:1.3.4")
-    implementation("androidx.camera:camera-view:1.3.4")
+    // AUSBC: USB UVC キャプチャ (ANYOYO 等) — CameraX では映らない端末向け
+    implementation("com.github.jiangdongguo.AndroidUSBCamera:libausbc:3.3.3")
+    implementation("androidx.fragment:fragment-ktx:1.8.2")
 
     // ML Kit Japanese OCR (on-device, no API key needed) - 鑑定スキル読取用
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
