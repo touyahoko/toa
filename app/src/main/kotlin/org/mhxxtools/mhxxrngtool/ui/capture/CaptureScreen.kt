@@ -146,7 +146,7 @@ fun CaptureScreen(
                         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
                             // 実フレーム受信 = 接続成功
                             frameCount++
-                            if (client.isCameraOpened() && !connected) {
+                            if (client.isCameraOpened() == true && !connected) {
                                 connected = true
                                 error = null
                                 status = "接続済み"
