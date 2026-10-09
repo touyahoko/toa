@@ -5,10 +5,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import com.jiangdg.ausbc.MultiCameraClient
+import com.jiangdg.ausbc.CameraClient
 import com.jiangdg.ausbc.base.CameraFragment
-import com.jiangdg.ausbc.callback.ICameraStateCallBack
 import com.jiangdg.ausbc.callback.ICaptureCallBack
+import com.jiangdg.ausbc.camera.CameraUvcStrategy
 import com.jiangdg.ausbc.camera.bean.CameraRequest
 import com.jiangdg.ausbc.render.env.RotateType
 import com.jiangdg.ausbc.widget.AspectRatioTextureView
@@ -16,8 +16,7 @@ import com.jiangdg.ausbc.widget.IAspectRatio
 import java.io.File
 
 /**
- * AUSBC (AndroidUSBCamera) ベースの UVC プレビュー。
- * nExt Camera / ANYOYO と同じ USB UVC 経路。
+ * AUSBC 3.2.7 対応 UVC プレビュー (ANYOYO / nExt Camera と同じ経路)
  */
 class CaptureUvcFragment : CameraFragment() {
 
@@ -48,38 +47,36 @@ class CaptureUvcFragment : CameraFragment() {
 
     override fun getGravity(): Int = Gravity.CENTER
 
-    override fun getCameraRequest(): CameraRequest {
-        return CameraRequest.Builder()
-            .setPreviewWidth(1280)
-            .setPreviewHeight(720)
-            .setRenderMode(CameraRequest.RenderMode.OPENGL)
+    /** 3.2.7 では getCameraRequest が private なので Client ごと差し替え */
+    override fun getCameraClient(): CameraClient {
+        return CameraClient.newBuilder(requireContext())
+            .setEnableGLES(true)
+            .setRawImage(false)
+            .setCameraStrategy(CameraUvcStrategy(requireContext()))
+            .setCameraRequest(
+                CameraRequest.Builder()
+                    .setFrontCamera(false)
+                    .setPreviewWidth(1280)
+                    .setPreviewHeight(720)
+                    .create()
+            )
             .setDefaultRotateType(RotateType.ANGLE_0)
-            .setAudioSource(CameraRequest.AudioSource.SOURCE_AUTO)
-            .setAspectRatioShow(true)
-            .setCaptureRawImage(false)
-            .setRawPreviewData(false)
-            .create()
+            .openDebug(false)
+            .build()
     }
 
-    override fun onCameraState(
-        self: MultiCameraClient.ICamera,
-        code: ICameraStateCallBack.State,
-        msg: String?
-    ) {
-        when (code) {
-            ICameraStateCallBack.State.OPENED ->
-                onStatus?.invoke("UVCカメラ起動成功（1280x720）")
-            ICameraStateCallBack.State.CLOSED ->
-                onStatus?.invoke("カメラを閉じました")
-            ICameraStateCallBack.State.ERROR ->
-                onError?.invoke(msg ?: "カメラエラー")
-        }
+    override fun initData() {
+        super.initData()
+        onStatus?.invoke("UVC初期化完了（接続するとプレビュー開始）")
     }
 
-    /** JPEG を一時ファイルに保存してパスを返す */
     fun takeSnapshot(onDone: (File?) -> Unit) {
-        val dir = requireContext().cacheDir
-        val out = File(dir, "uvc_snap_${System.currentTimeMillis()}.jpg")
+        if (!isCameraOpened()) {
+            onError?.invoke("カメラ未接続")
+            onDone(null)
+            return
+        }
+        val out = File(requireContext().cacheDir, "uvc_snap_${System.currentTimeMillis()}.jpg")
         captureImage(object : ICaptureCallBack {
             override fun onBegin() {
                 onStatus?.invoke("撮影中…")
