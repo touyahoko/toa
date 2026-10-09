@@ -197,7 +197,11 @@ fun MainScreen(appState: AppStateViewModel) {
             Modifier
                 .fillMaxSize()
                 .background(HtmlColors.Bg)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
+                // キャプチャタブは余白なしで全画面プレビュー
+                .then(
+                    if (selectedTab == 6) Modifier
+                    else Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                )
         ) {
             when (selectedTab) {
                 0 -> SearchScreen(
