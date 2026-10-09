@@ -69,30 +69,102 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
         return "✓ 増分列 (${dif.size}件): ${dif.joinToString(" ")}" to true
     }
 
-    fun startSearch() {
-        if (searchJob?.isActive == true) return
+    fun startSearch(overrideValues: List<Int>? = null) {
+        if (searchJob?.isActive == true) {
+            searchJob?.cancel()
+        }
         val s = _state.value
-        val values = parseValues(s.sequence) ?: return
-        _state.update { it.copy(results = emptyList(), resultCount = 0, progress = 0f, isSearching = true) }
+        val values = overrideValues ?: parseValues(s.sequence) ?: run {
+            _state.update { it.copy(analyzeMsg = "⚠ 数値列が空です。動画解析か手入力をしてください") }
+            return
+        }
+        // ComboSearcher が受理できるか先に確認（先頭3件落とし後に差分が取れるか）
+        if (org.mhxxtools.mhxxrngtool.rng.ComboSearcher.create(values, s.start) == null) {
+            val (msg, _) = validate(values)
+            _state.update {
+                it.copy(
+                    results = emptyList(),
+                    resultCount = 0,
+                    isSearching = false,
+                    validationMsg = msg,
+                    validationOk = false,
+                    analyzeMsg = "⚠ 検索できない数値列です: $msg"
+                )
+            }
+            return
+        }
+        _state.update {
+            it.copy(
+                results = emptyList(),
+                resultCount = 0,
+                progress = 0f,
+                isSearching = true,
+                sequence = if (overrideValues != null)
+                    overrideValues.joinToString(" ") { "%02d".format(it) }
+                else it.sequence
+            )
+        }
 
+        val start = s.start
+        val step = s.step
         searchJob = viewModelScope.launch(Dispatchers.Default) {
             val engine = MHXXEngine(0)
             val results = mutableListOf<FrameResult>()
             var count = 0
-            for (r in engine.searchCombo(s.start, s.step, values,
-                shouldStop = { !isActive },
-                onProgress = { done, total ->
-                    CoroutineScope(Dispatchers.Main).launch {
-                        _state.update { it.copy(progress = done.toFloat() / total.coerceAtLeast(1)) }
+            try {
+                for (r in engine.searchCombo(
+                    start, step, values,
+                    shouldStop = { !isActive },
+                    onProgress = { done, total ->
+                        if (done % 5_000_000L == 0L || done == total) {
+                            val p = done.toFloat() / total.coerceAtLeast(1)
+                            launch(Dispatchers.Main) {
+                                _state.update { it.copy(progress = p) }
+                            }
+                        }
                     }
-                })) {
-                if (!isActive) break
-                count++
-                if (results.size < 300) results.add(r)
-                val snap = results.toList(); val c = count
-                withContext(Dispatchers.Main) { _state.update { it.copy(results = snap, resultCount = c) } }
+                )) {
+                    if (!isActive) break
+                    count++
+                    if (results.size < 300) results.add(r)
+                    if (count % 5 == 0 || count <= 3) {
+                        val snap = results.toList()
+                        val c = count
+                        withContext(Dispatchers.Main) {
+                            _state.update { it.copy(results = snap, resultCount = c) }
+                        }
+                    }
+                }
+                // 最後の結果を必ず反映
+                val snap = results.toList()
+                val c = count
+                withContext(Dispatchers.Main) {
+                    _state.update {
+                        it.copy(
+                            results = snap,
+                            resultCount = c,
+                            isSearching = false,
+                            progress = 0f,
+                            analyzeMsg = if (c == 0)
+                                "検索完了: 0件（開始位置・数値列を確認）"
+                            else
+                                "検索完了: ${c}件"
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _state.update {
+                        it.copy(
+                            isSearching = false,
+                            progress = 0f,
+                            analyzeMsg = "検索エラー: ${e.message}"
+                        )
+                    }
+                }
             }
-            withContext(Dispatchers.Main) { _state.update { it.copy(isSearching = false, progress = 0f) } }
         }
     }
 
@@ -197,8 +269,13 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
                                 "⚠ ${nums.size}個検出: $formatted / $msg"
                         )
                     }
-                    if (nums.isNotEmpty() && ok) {
-                        startSearch()
+                    // 検証OK、または ComboSearcher が作れるなら自動検索
+                    if (nums.isNotEmpty()) {
+                        val canSearch = ok || org.mhxxtools.mhxxrngtool.rng.ComboSearcher.create(nums, _state.value.start) != null
+                        if (canSearch) {
+                            // 解析ジョブ完了後に検索を起動（競合回避）
+                            startSearch(overrideValues = nums)
+                        }
                     }
                 },
                 onFailure = { err ->
