@@ -37,9 +37,11 @@ import org.mhxxtools.mhxxrngtool.ui.search.SearchScreen
 import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
+import org.mhxxtools.mhxxrngtool.ui.capture.CaptureScreen
+import org.mhxxtools.mhxxrngtool.ui.capture.CaptureViewModel
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "キャプチャ", "タイマー")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -50,6 +52,7 @@ fun MainScreen(appState: AppStateViewModel) {
     val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
+    val captureVm: CaptureViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -83,7 +86,7 @@ fun MainScreen(appState: AppStateViewModel) {
                             comboVm.startAnalysis()
                         }
                         "start" -> when (action.tab ?: selectedTab) {
-                            6 -> timerVm.startCountdown()
+                            7 -> timerVm.startCountdown()
                             2 -> comboVm.startAnalysis()
                             5 -> Toast.makeText(context, "鑑定は画像を選んでください", Toast.LENGTH_SHORT).show()
                             else -> searchVm.startSearch()
@@ -204,7 +207,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 6
+                        selectedTab = 7
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
@@ -212,7 +215,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = comboVm,
                     onResultTap = { frame ->
                         timerVm.setCurrentPosFrame(frame)
-                        selectedTab = 6
+                        selectedTab = 7
                     }
                 )
                 3 -> RewardScreen(vm = rewardVm, kind = appState.kind)
@@ -231,10 +234,23 @@ fun MainScreen(appState: AppStateViewModel) {
                     },
                     onFrameTap = { frame ->
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 6
+                        selectedTab = 7
                     }
                 )
-                6 -> TimerScreen(vm = timerVm)
+                6 -> CaptureScreen(
+                    vm = captureVm,
+                    onSnapshotForOcr = { jpeg ->
+                        // 一時ファイルにして鑑定へ
+                        val f = java.io.File(context.cacheDir, "capture_snap.jpg")
+                        f.writeBytes(jpeg)
+                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                            context, "${context.packageName}.provider", f
+                        )
+                        ocrVm.recognizeFromUri(context, uri, appState.kind)
+                        selectedTab = 5
+                    }
+                )
+                7 -> TimerScreen(vm = timerVm)
             }
         }
     }
