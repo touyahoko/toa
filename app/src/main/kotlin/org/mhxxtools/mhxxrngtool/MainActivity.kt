@@ -1,19 +1,19 @@
 package org.mhxxtools.mhxxrngtool
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.fragment.app.FragmentActivity
 import org.mhxxtools.mhxxrngtool.ui.MainScreen
 import org.mhxxtools.mhxxrngtool.ui.theme.MhxxRngTheme
 
-class MainActivity : ComponentActivity() {
+/** FragmentActivity: AUSBC (CameraFragment) 埋め込みに必要 */
+class MainActivity : FragmentActivity() {
 
-    // アプリ全体の共有状態 (お守り種類 / FPS)
     private val appState: AppStateViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MhxxRngTheme {
-                Surface(Modifier.fillMaxSize()) {
+                Surface(modifier = Modifier.fillMaxSize()) {
                     MainScreen(appState = appState)
                 }
             }
