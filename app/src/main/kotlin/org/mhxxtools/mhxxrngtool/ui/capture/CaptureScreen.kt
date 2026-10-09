@@ -1,14 +1,9 @@
 package org.mhxxtools.mhxxrngtool.ui.capture
 
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.view.PreviewView
+import android.view.View
+import android.widget.FrameLayout
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,46 +12,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.fragment.app.FragmentActivity
+import java.io.File
 
 /**
- * USBキャプチャ (ANYOYO 等) — nExt Camera と同じ外部カメラ経路。
+ * AUSBC UVC キャプチャ画面（AndroidUSBCamera 移植）。
+ * Switch本体USB-C → ANYOYO → スマホOTG（ドック不要）
  */
 @Composable
 fun CaptureScreen(
-    vm: CaptureViewModel,
-    onSnapshotForOcr: (ByteArray) -> Unit = {},
+    onSnapshotFile: (File) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val s = vm.state.collectAsStateWithLifecycle().value
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    var permitted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { ok -> permitted = ok }
-
-    var previewView by remember { mutableStateOf<PreviewView?>(null) }
-
-    LaunchedEffect(permitted, previewView) {
-        if (permitted && previewView != null) {
-            vm.bind(context, lifecycleOwner, previewView!!)
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose { vm.unbind() }
-    }
+    val activity = context as? FragmentActivity
+    var status by remember { mutableStateOf("USBカメラ接続待ち…") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var canSnap by remember { mutableStateOf(false) }
+    var fragmentRef by remember { mutableStateOf<CaptureUvcFragment?>(null) }
 
     Column(
         modifier
@@ -66,53 +43,25 @@ fun CaptureScreen(
     ) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("📹 Switchキャプチャ (USB / ANYOYO)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "接続（写真・nExt Camera と同じ・ドック不要）:\n" +
+                    "📹 USBキャプチャ (AUSBC / ANYOYO)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    "接続（nExt Camera と同じ・ドック不要）:\n" +
                         "Switch本体USB-C → ANYOYO → USB → このスマホ(OTG)\n" +
-                        "映らないときは「再接続」→ カメラ一覧で「外部(UVC)」を選択",
+                        "接続後、自動でプレビューが始まります。",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    s.status,
+                    status,
                     fontSize = 12.sp,
-                    color = if (s.error != null) MaterialTheme.colorScheme.error
-                    else Color(0xFF4CAF50)
+                    color = if (error != null) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
                 )
-                if (s.error != null) {
-                    Text(s.error, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("FPS: ${"%.1f".format(s.fps)}", fontSize = 12.sp)
-                    Text(s.resolution, fontSize = 12.sp)
-                    Text(s.cameraLabel, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-
-        // カメラ選択（nExt Camera のように複数カメラを切り替え）
-        if (s.cameras.isNotEmpty()) {
-            Text("カメラ選択", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                s.cameras.forEach { cam ->
-                    val selected = cam.id == s.selectedCameraId
-                    FilterChip(
-                        selected = selected,
-                        onClick = { vm.selectCamera(cam.id) },
-                        label = {
-                            Text(
-                                cam.label,
-                                fontSize = 11.sp,
-                                maxLines = 1
-                            )
-                        }
-                    )
+                if (error != null) {
+                    Text(error!!, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -124,25 +73,44 @@ fun CaptureScreen(
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color.Black)
         ) {
-            if (!permitted) {
-                Column(
-                    Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("カメラ権限が必要です", color = Color.White)
-                    Spacer(Modifier.height(8.dp))
-                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                        Text("許可する")
-                    }
-                }
+            if (activity == null) {
+                Text(
+                    "FragmentActivity が必要です",
+                    color = Color.White,
+                    modifier = Modifier.align(Alignment.Center)
+                )
             } else {
                 AndroidView(
                     factory = { ctx ->
-                        PreviewView(ctx).also {
-                            it.scaleType = PreviewView.ScaleType.FIT_CENTER
-                            it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            previewView = it
+                        val container = FrameLayout(ctx).apply {
+                            id = View.generateViewId()
+                            layoutParams = FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.MATCH_PARENT
+                            )
                         }
+                        container.post {
+                            val frag = CaptureUvcFragment().also { f ->
+                                f.onStatus = { msg ->
+                                    status = msg
+                                    if (msg.contains("成功")) {
+                                        canSnap = true
+                                        error = null
+                                    }
+                                }
+                                f.onError = { msg ->
+                                    error = msg
+                                    status = "エラー"
+                                    canSnap = false
+                                }
+                            }
+                            fragmentRef = frag
+                            activity.supportFragmentManager
+                                .beginTransaction()
+                                .replace(container.id, frag, "uvc_capture")
+                                .commitAllowingStateLoss()
+                        }
+                        container
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -155,20 +123,42 @@ fun CaptureScreen(
         ) {
             OutlinedButton(
                 onClick = {
-                    if (permitted) previewView?.let { vm.bind(context, lifecycleOwner, it) }
-                    else permissionLauncher.launch(Manifest.permission.CAMERA)
+                    // 再接続: Fragment 差し替え
+                    val act = activity ?: return@OutlinedButton
+                    status = "再接続中…"
+                    error = null
+                    canSnap = false
+                    // 既存タグを消して再作成はユーザーにタブ再入を促す簡易版
+                    fragmentRef?.let {
+                        try {
+                            it.requireActivity()
+                            status = "接続済み。プレビューを確認してください"
+                        } catch (_: Exception) {
+                            status = "タブを一度離れて戻ると再接続します"
+                        }
+                    }
                 },
                 modifier = Modifier.weight(1f)
-            ) { Text("再接続") }
+            ) { Text("状態確認") }
 
             Button(
                 onClick = {
-                    val jpeg = vm.snapshotJpeg()
-                    if (jpeg != null) onSnapshotForOcr(jpeg)
+                    fragmentRef?.takeSnapshot { file ->
+                        if (file != null) onSnapshotFile(file)
+                        else error = "撮影に失敗しました"
+                    } ?: run { error = "カメラ未接続" }
                 },
-                enabled = s.hasFrame,
+                enabled = canSnap || fragmentRef != null,
                 modifier = Modifier.weight(1f)
             ) { Text("このコマを鑑定") }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            activity?.supportFragmentManager?.findFragmentByTag("uvc_capture")?.let { f ->
+                activity.supportFragmentManager.beginTransaction().remove(f).commitAllowingStateLoss()
+            }
         }
     }
 }
