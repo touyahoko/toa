@@ -833,13 +833,27 @@ object SkillMatcher {
 //  固有スキル2  [スキル名]  [+SP]     ← CROP_SKILL2
 //  スロット   ○○○                    ← CROP_SLOT
 // ======================================================================
+/**
+ * Switch キャプチャボタン固定画角 (16:9 / 例: 1280×720) の相対座標。
+ * 6092.jpg (1280×720) 実測。スキル名は右側、ポイントはその右。
+ */
 object CropRegion {
-    /** 固有スキル1 行 (left, top, right, bottom) */
-    val SKILL1 = floatArrayOf(0.320f, 0.245f, 0.640f, 0.308f)
-    /** 固有スキル2 行 */
-    val SKILL2 = floatArrayOf(0.320f, 0.298f, 0.640f, 0.360f)
-    /** スロット行（やや広め。Switch 1280x720 キャプチャ想定） */
-    val SLOT   = floatArrayOf(0.28f, 0.33f, 0.62f, 0.44f)
+    /** スキル1 名 */
+    val SKILL1_NAME = floatArrayOf(0.5219f, 0.2292f, 0.5938f, 0.2667f)
+    /** スキル1 ポイント */
+    val SKILL1_PTS  = floatArrayOf(0.5938f, 0.2292f, 0.6602f, 0.2667f)
+    /** スキル2 名（----- の場合は空） */
+    val SKILL2_NAME = floatArrayOf(0.5219f, 0.2750f, 0.6172f, 0.3056f)
+    /** スキル2 ポイント */
+    val SKILL2_PTS  = floatArrayOf(0.5938f, 0.2750f, 0.6602f, 0.3056f)
+    /** スロット ○ / --- */
+    val SLOT        = floatArrayOf(0.4375f, 0.3028f, 0.5313f, 0.3444f)
+    /** 護石パネル全体（フォールバック OCR 用） */
+    val PANEL       = floatArrayOf(0.3125f, 0.1181f, 0.6600f, 0.3600f)
+
+    // 後方互換（旧コード用）
+    val SKILL1 = floatArrayOf(0.5219f, 0.2292f, 0.6602f, 0.2667f)
+    val SKILL2 = floatArrayOf(0.5219f, 0.2750f, 0.6602f, 0.3056f)
 }
 
 // ======================================================================
