@@ -115,7 +115,7 @@ fun MainScreen(appState: AppStateViewModel) {
                 .fillMaxWidth()
                 .background(HtmlColors.Surface)
         ) {
-            Row(
+            if (selectedTab != 6) Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 6.dp),
@@ -138,7 +138,7 @@ fun MainScreen(appState: AppStateViewModel) {
                 }
             }
 
-            Row(
+            if (selectedTab != 6) Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
