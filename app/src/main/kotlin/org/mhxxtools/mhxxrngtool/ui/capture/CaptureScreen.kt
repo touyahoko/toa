@@ -6,7 +6,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,8 +26,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
- * キャプチャボード (USB UVC) プレビュー画面。
- * Switch画面を最大60fpsで受信し、静止画を鑑定へ渡せる。
+ * USBキャプチャ (ANYOYO 等) — nExt Camera と同じ外部カメラ経路。
  */
 @Composable
 fun CaptureScreen(
@@ -65,10 +66,11 @@ fun CaptureScreen(
     ) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("📹 Switchキャプチャ (USB)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text("📹 Switchキャプチャ (USB / ANYOYO)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "接続: Switch(ドックHDMI) → キャプチャボード → USB-OTG → このスマホ\n" +
-                        "UVC対応ボードのみ。端末・ボードにより60fpsにならない場合があります。",
+                    "接続（nExt Camera と同じ）:\n" +
+                        "Switch(ドックHDMI) → ANYOYO → USB-OTG → このスマホ\n" +
+                        "映らないときは「再接続」→ 下のカメラ一覧で「外部(UVC)」を選択",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -85,6 +87,32 @@ fun CaptureScreen(
                     Text("FPS: ${"%.1f".format(s.fps)}", fontSize = 12.sp)
                     Text(s.resolution, fontSize = 12.sp)
                     Text(s.cameraLabel, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // カメラ選択（nExt Camera のように複数カメラを切り替え）
+        if (s.cameras.isNotEmpty()) {
+            Text("カメラ選択", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                s.cameras.forEach { cam ->
+                    val selected = cam.id == s.selectedCameraId
+                    FilterChip(
+                        selected = selected,
+                        onClick = { vm.selectCamera(cam.id) },
+                        label = {
+                            Text(
+                                cam.label,
+                                fontSize = 11.sp,
+                                maxLines = 1
+                            )
+                        }
+                    )
                 }
             }
         }
