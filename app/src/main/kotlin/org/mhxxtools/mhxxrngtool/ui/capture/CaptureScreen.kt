@@ -1,5 +1,7 @@
 package org.mhxxtools.mhxxrngtool.ui.capture
 
+import android.content.Context
+import android.content.ContextWrapper
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
@@ -19,8 +21,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
 import java.io.File
 
+private fun Context.findFragmentActivity(): FragmentActivity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is FragmentActivity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
 /**
- * AUSBC UVC キャプチャ画面（AndroidUSBCamera 移植）。
+ * AUSBC UVC キャプチャ画面
  * Switch本体USB-C → ANYOYO → スマホOTG（ドック不要）
  */
 @Composable
@@ -29,7 +40,7 @@ fun CaptureScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val activity = context as? FragmentActivity
+    val activity = remember(context) { context.findFragmentActivity() }
     var status by remember { mutableStateOf("USBカメラ接続待ち…") }
     var error by remember { mutableStateOf<String?>(null) }
     var canSnap by remember { mutableStateOf(false) }
@@ -41,7 +52,7 @@ fun CaptureScreen(
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Card(Modifier.fillMaxWidth()) {
+        Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     "📹 USBキャプチャ (AUSBC / ANYOYO)",
@@ -75,7 +86,7 @@ fun CaptureScreen(
         ) {
             if (activity == null) {
                 Text(
-                    "FragmentActivity が必要です",
+                    "FragmentActivity が必要です\nMainActivity を FragmentActivity に変更してください",
                     color = Color.White,
                     modifier = Modifier.align(Alignment.Center)
                 )
@@ -90,10 +101,16 @@ fun CaptureScreen(
                             )
                         }
                         container.post {
+                            val existing = activity.supportFragmentManager
+                                .findFragmentByTag("uvc_capture")
+                            if (existing is CaptureUvcFragment) {
+                                fragmentRef = existing
+                                return@post
+                            }
                             val frag = CaptureUvcFragment().also { f ->
                                 f.onStatus = { msg ->
                                     status = msg
-                                    if (msg.contains("成功")) {
+                                    if (msg.contains("完了") || msg.contains("成功") || msg.contains("撮影")) {
                                         canSnap = true
                                         error = null
                                     }
@@ -123,20 +140,16 @@ fun CaptureScreen(
         ) {
             OutlinedButton(
                 onClick = {
-                    // 再接続: Fragment 差し替え
-                    val act = activity ?: return@OutlinedButton
-                    status = "再接続中…"
-                    error = null
-                    canSnap = false
-                    // 既存タグを消して再作成はユーザーにタブ再入を促す簡易版
-                    fragmentRef?.let {
+                    val opened = fragmentRef?.let {
                         try {
-                            it.requireActivity()
-                            status = "接続済み。プレビューを確認してください"
+                            // isCameraOpened is protected - use status text
+                            status = "Fragment接続中。USB許可を確認してください"
+                            true
                         } catch (_: Exception) {
-                            status = "タブを一度離れて戻ると再接続します"
+                            false
                         }
-                    }
+                    } ?: false
+                    if (!opened) status = "タブを一度離れて戻ると再接続します"
                 },
                 modifier = Modifier.weight(1f)
             ) { Text("状態確認") }
@@ -144,20 +157,28 @@ fun CaptureScreen(
             Button(
                 onClick = {
                     fragmentRef?.takeSnapshot { file ->
-                        if (file != null) onSnapshotFile(file)
-                        else error = "撮影に失敗しました"
+                        if (file != null) {
+                            canSnap = true
+                            onSnapshotFile(file)
+                        } else {
+                            error = "撮影に失敗しました（カメラ未接続の可能性）"
+                        }
                     } ?: run { error = "カメラ未接続" }
                 },
-                enabled = canSnap || fragmentRef != null,
+                enabled = fragmentRef != null,
                 modifier = Modifier.weight(1f)
             ) { Text("このコマを鑑定") }
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(activity) {
         onDispose {
             activity?.supportFragmentManager?.findFragmentByTag("uvc_capture")?.let { f ->
-                activity.supportFragmentManager.beginTransaction().remove(f).commitAllowingStateLoss()
+                try {
+                    activity.supportFragmentManager.beginTransaction()
+                        .remove(f)
+                        .commitAllowingStateLoss()
+                } catch (_: Exception) { }
             }
         }
     }
