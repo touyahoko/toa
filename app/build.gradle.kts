@@ -56,7 +56,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.0")
 
     // AUSBC: USB UVC キャプチャ (ANYOYO 等) — CameraX では映らない端末向け
-    implementation("com.github.jiangdongguo.AndroidUSBCamera:libausbc:3.3.3")
+    implementation("com.github.jiangdongguo.AndroidUSBCamera:libausbc:3.2.7")
     implementation("androidx.fragment:fragment-ktx:1.8.2")
 
     // ML Kit Japanese OCR (on-device, no API key needed) - 鑑定スキル読取用
