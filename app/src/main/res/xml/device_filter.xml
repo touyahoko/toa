@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Arduino Leonardo VID=0x2341 PID=0x8036(CDC)/0x0036(bootloader) -->
+<!-- USB Host: Arduino + 一般的な UVC キャプチャボード -->
 <resources>
+    <!-- Arduino Leonardo -->
     <usb-device vendor-id="9025" product-id="32822" />
     <usb-device vendor-id="9025" product-id="54" />
+    <!-- よくある USB キャプチャ (VID は機種により異なる。未登録でも CameraX が認識する場合あり) -->
+    <usb-device vendor-id="13028" />  <!-- 一部 HDMI capture -->
+    <usb-device vendor-id="12903" />
+    <usb-device vendor-id="1133" />   <!-- Logitech 等 -->
+    <usb-device vendor-id="3141" />
+    <usb-device vendor-id="2760" />
+    <usb-device vendor-id="3034" />
 </resources>
