@@ -68,9 +68,9 @@ fun CaptureScreen(
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("📹 Switchキャプチャ (USB / ANYOYO)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "接続（nExt Camera と同じ）:\n" +
-                        "Switch(ドックHDMI) → ANYOYO → USB-OTG → このスマホ\n" +
-                        "映らないときは「再接続」→ 下のカメラ一覧で「外部(UVC)」を選択",
+                    "接続（写真・nExt Camera と同じ・ドック不要）:\n" +
+                        "Switch本体USB-C → ANYOYO → USB → このスマホ(OTG)\n" +
+                        "映らないときは「再接続」→ カメラ一覧で「外部(UVC)」を選択",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

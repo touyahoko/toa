@@ -44,7 +44,7 @@ data class CameraOption(
 
 data class CaptureUiState(
     val isRunning: Boolean = false,
-    val status: String = "ANYOYO等をUSB OTGで接続 → 再接続",
+    val status: String = "Switch本体→ANYOYO→スマホOTG で接続 → 再接続",
     val fps: Float = 0f,
     val resolution: String = "",
     val cameraLabel: String = "",
@@ -59,7 +59,7 @@ data class CaptureUiState(
  * nExt Camera と同様に外部カメラを列挙して選択する。
  *
  * 接続例（写真と同じ）:
- *   Switch(ドック HDMI) → ANYOYO HDMI-IN → USB → スマホ(OTG)
+ *   Switch本体USB-C → ANYOYO → USB → スマホ(OTG)（ドック不要）
  */
 @OptIn(ExperimentalCamera2Interop::class)
 class CaptureViewModel : ViewModel() {
