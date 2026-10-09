@@ -32,12 +32,14 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.jiangdg.ausbc.CameraClient
 import com.jiangdg.ausbc.callback.ICaptureCallBack
-import com.jiangdg.ausbc.callback.IPlayCallBack
 import com.jiangdg.ausbc.camera.CameraUvcStrategy
 import com.jiangdg.ausbc.camera.bean.CameraRequest
 import com.jiangdg.ausbc.render.env.RotateType
 import com.jiangdg.ausbc.widget.AspectRatioTextureView
 import java.io.File
+
+private const val PREVIEW_W = 1280
+private const val PREVIEW_H = 720
 
 private fun Context.findActivity(): Activity? {
     var ctx: Context? = this
@@ -49,10 +51,8 @@ private fun Context.findActivity(): Activity? {
 }
 
 /**
- * AUSBC USBキャプチャ
- * - 全画面 16:9（Switch画面を全て表示）
- * - ゲーム音（キャプチャデバイスの音声入力を再生）
- * - 横画面推奨
+ * AUSBC USBキャプチャ（映像のみ・音声なし）
+ * Switch 16:9 を余白込みで全体が収まるよう中央表示
  */
 @Composable
 fun CaptureScreen(
@@ -66,47 +66,32 @@ fun CaptureScreen(
     val clientHolder = remember { arrayOfNulls<CameraClient>(1) }
     var connected by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
-    var audioOn by remember { mutableStateOf(false) }
     var frameCount by remember { mutableStateOf(0) }
 
-    // キャプチャ中は横画面固定
     DisposableEffect(Unit) {
         val prev = activity?.requestedOrientation
             ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
-            try {
-                clientHolder[0]?.stopPlayMic()
-            } catch (_: Exception) {
-            }
             activity?.requestedOrientation = prev
         }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val cam = result[Manifest.permission.CAMERA] != false
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED || cam
-        ) {
-            status = "USBカメラ接続待ち…"
-        } else {
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) status = "USBカメラ接続待ち…"
+        else {
             error = "CAMERA権限が必要です"
             status = "権限エラー"
         }
     }
 
     LaunchedEffect(Unit) {
-        val need = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
-        ) need += Manifest.permission.CAMERA
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) need += Manifest.permission.RECORD_AUDIO
-        if (need.isNotEmpty()) {
-            permissionLauncher.launch(need.toTypedArray())
+        ) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
         } else {
             status = "USBカメラ接続待ち…"
         }
@@ -120,34 +105,10 @@ fun CaptureScreen(
         }
     }
 
-    fun startGameAudio(client: CameraClient) {
-        try {
-            client.startPlayMic(object : IPlayCallBack {
-                override fun onBegin() {
-                    audioOn = true
-                    status = "接続済み（音声ON）"
-                }
-
-                override fun onError(errorMsg: String) {
-                    audioOn = false
-                    // 音声失敗でも映像は継続
-                    status = "接続済み（映像のみ）"
-                }
-
-                override fun onComplete() {
-                    audioOn = false
-                }
-            })
-        } catch (_: Exception) {
-            audioOn = false
-        }
-    }
-
     Box(modifier.fillMaxSize().background(Color.Black)) {
-        // ===== 全画面プレビュー（16:9 全体表示・中央配置） =====
+        // 全画面・16:9 全体フィット（AspectRatioTextureView が黒帯付きで収める）
         AndroidView(
             factory = { ctx ->
-                // 外枠いっぱいに広げ、内部で 16:9 を中央フィット
                 val root = FrameLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -172,9 +133,8 @@ fun CaptureScreen(
                         .setCameraRequest(
                             CameraRequest.Builder()
                                 .setFrontCamera(false)
-                                // Switch / キャプチャボード標準 16:9
-                                .setPreviewWidth(1280)
-                                .setPreviewHeight(720)
+                                .setPreviewWidth(PREVIEW_W)
+                                .setPreviewHeight(PREVIEW_H)
                                 .create()
                         )
                         .setDefaultRotateType(RotateType.ANGLE_0)
@@ -189,11 +149,10 @@ fun CaptureScreen(
                             height: Int
                         ) {
                             try {
-                                // 16:9 を明示（Switch画面全体）
-                                tv.setAspectRatio(1280, 720)
+                                // 16:9 を明示 → View が画面内に全体収まるサイズに自己調整
+                                tv.setAspectRatio(PREVIEW_W, PREVIEW_H)
                                 client.openCamera(tv)
                                 status = "プレビュー要求済み（USB許可を確認）"
-                                startGameAudio(client)
                             } catch (e: Exception) {
                                 error = "openCamera: ${e.message}"
                                 status = "エラー"
@@ -205,23 +164,15 @@ fun CaptureScreen(
                             width: Int,
                             height: Int
                         ) {
-                            tv.setAspectRatio(1280, 720)
+                            tv.setAspectRatio(PREVIEW_W, PREVIEW_H)
                         }
 
                         override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
                             try {
                                 if (recording) {
-                                    try {
-                                        client.captureVideoStop()
-                                    } catch (_: Exception) {
-                                    }
+                                    try { client.captureVideoStop() } catch (_: Exception) {}
                                     recording = false
                                 }
-                                try {
-                                    client.stopPlayMic()
-                                } catch (_: Exception) {
-                                }
-                                audioOn = false
                                 client.closeCamera()
                             } catch (_: Exception) {
                             }
@@ -234,12 +185,12 @@ fun CaptureScreen(
                             if (client.isCameraOpened() == true && !connected) {
                                 connected = true
                                 error = null
-                                status = if (audioOn) "接続済み（音声ON）" else "接続済み"
+                                status = "接続済み"
                             }
                         }
                     }
                 } catch (e: Exception) {
-                    error = "初期化失敗: ${e.javaClass.simpleName}: ${e.message}"
+                    error = "初期化失敗: ${e.message}"
                     status = "エラー"
                 }
                 root
@@ -247,7 +198,6 @@ fun CaptureScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // ===== 上部ステータス =====
         Column(
             Modifier
                 .align(Alignment.TopCenter)
@@ -269,9 +219,7 @@ fun CaptureScreen(
                         fontSize = 13.sp
                     )
                     Text(
-                        if (connected) {
-                            if (audioOn) "● 接続済み / 音声ON" else "● 接続済み"
-                        } else status,
+                        if (connected) "● 接続済み" else status,
                         color = when {
                             error != null -> Color(0xFFFF8A80)
                             connected -> Color(0xFF69F0AE)
@@ -297,7 +245,6 @@ fun CaptureScreen(
             }
         }
 
-        // ===== 下部操作 =====
         Row(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -308,28 +255,6 @@ fun CaptureScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedButton(
-                onClick = {
-                    val c = clientHolder[0] ?: return@OutlinedButton
-                    try {
-                        if (audioOn) {
-                            c.stopPlayMic()
-                            audioOn = false
-                            status = "接続済み（音声OFF）"
-                        } else {
-                            startGameAudio(c)
-                        }
-                    } catch (e: Exception) {
-                        error = "音声: ${e.message}"
-                    }
-                },
-                enabled = connected || clientHolder[0] != null,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                modifier = Modifier.weight(0.9f)
-            ) {
-                Text(if (audioOn) "音声OFF" else "音声ON", fontSize = 12.sp)
-            }
-
             OutlinedButton(
                 onClick = {
                     val c = clientHolder[0] ?: run {
@@ -428,7 +353,7 @@ fun CaptureScreen(
                     }
                 },
                 enabled = connected || clientHolder[0] != null,
-                modifier = Modifier.weight(1.1f)
+                modifier = Modifier.weight(1.2f)
             ) {
                 Text("このコマを鑑定", fontSize = 12.sp)
             }
@@ -440,14 +365,7 @@ fun CaptureScreen(
             try {
                 val c = clientHolder[0]
                 if (recording) {
-                    try {
-                        c?.captureVideoStop()
-                    } catch (_: Exception) {
-                    }
-                }
-                try {
-                    c?.stopPlayMic()
-                } catch (_: Exception) {
+                    try { c?.captureVideoStop() } catch (_: Exception) {}
                 }
                 c?.closeCamera()
             } catch (_: Exception) {
