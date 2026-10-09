@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId = "org.mhxxtools.mhxxrngtool"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 32 // AUSBC USBMonitor registerReceiver 互換（33+で SecurityException）
         versionCode = 1
         versionName = "1.0.0"
         vectorDrawables { useSupportLibrary = true }
