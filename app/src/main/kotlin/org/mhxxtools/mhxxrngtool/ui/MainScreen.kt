@@ -60,7 +60,10 @@ fun MainScreen(appState: AppStateViewModel) {
         Modifier
             .fillMaxSize()
             .background(HtmlColors.Bg)
-            .windowInsetsPadding(WindowInsets.systemBars)
+            .then(
+                if (selectedTab == 6) Modifier
+                else Modifier.windowInsetsPadding(WindowInsets.systemBars)
+            )
     ) {
         Column(
             Modifier
@@ -114,28 +117,29 @@ fun MainScreen(appState: AppStateViewModel) {
                 Spacer(Modifier.weight(1f))
             }
 
-            Spacer(Modifier.height(2.dp))
-
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 4.dp)
-            ) {
-                TABS.forEachIndexed { idx, title ->
-                    HtmlTab(
-                        title = title,
-                        selected = selectedTab == idx,
-                        onClick = { selectedTab = idx }
-                    )
+            if (selectedTab != 6) {
+                Spacer(Modifier.height(2.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp)
+                ) {
+                    TABS.forEachIndexed { idx, title ->
+                        HtmlTab(
+                            title = title,
+                            selected = selectedTab == idx,
+                            onClick = { selectedTab = idx }
+                        )
+                    }
                 }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(HtmlColors.Border)
+                )
             }
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(HtmlColors.Border)
-            )
         }
 
         Box(
@@ -191,7 +195,8 @@ fun MainScreen(appState: AppStateViewModel) {
                         )
                         ocrVm.recognizeFromUri(context, uri, appState.kind)
                         selectedTab = 5
-                    }
+                    },
+                    onBack = { selectedTab = 5 }
                 )
                 7 -> TimerScreen(vm = timerVm)
             }
