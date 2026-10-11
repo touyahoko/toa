@@ -106,12 +106,18 @@ object CharmTemplateReader {
     }
 
     private fun toSkillPair(name: String): Pair<Int, String>? {
+        val n = name.replace("　", "").replace("ＳＰ", "SP").trim()
+        // テンプレ「（なし）」はスキル無し
+        if (n.isEmpty() || n == "（なし）" || n == "(なし)" || n == "(無)" || n == "なし") {
+            return null
+        }
         val idx = SKILL_NAMES.indexOfFirst {
             val a = it.replace("　", "").replace("ＳＰ", "SP").trim()
-            a == name
+            a == n
         }
         if (idx < 0) return null
-        return idx to name
+        // 表示名は必ず SKILL_NAMES の正式名（テンプレファイル名と一致）
+        return idx to SKILL_NAMES[idx]
     }
 
     private fun ensureLoaded(context: Context) {
