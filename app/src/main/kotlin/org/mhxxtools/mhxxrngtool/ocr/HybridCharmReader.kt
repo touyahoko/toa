@@ -86,6 +86,13 @@ object HybridCharmReader {
                     absorb(panel, "panel-ml")
                     absorb(fullCharm, "full-ml")
 
+                    // スロットは必ず assets/charm_templates/slots と照合
+                    val slotT = CharmTemplateReader.matchSlotsOnly(context, bitmap)
+                    if (slotT in 0..3) {
+                        merged = OcrCharm(merged.kind, slotT, merged.skills)
+                        notes += "slotT"
+                    }
+
                     if (merged.skills.isEmpty()) {
                         error(
                             "スキルを認識できませんでした。\n" +

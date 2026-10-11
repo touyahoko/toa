@@ -159,14 +159,14 @@ object CharmTemplateReader {
 
     private fun findSkillHits(gray: Array<IntArray>): List<Hit> {
         val hits = mutableListOf<Hit>()
-        val minScore = 0.48f
-        // パネル内はテンプレ原寸に近いのでスケールを絞る
-        val scales = floatArrayOf(1.0f, 0.85f, 1.15f, 0.7f, 1.3f)
+        val minScore = 0.42f
+        // 複数スケールで網羅（スマホ撮影の大きさバラつき対策）
+        val scales = floatArrayOf(0.55f, 0.7f, 0.85f, 1.0f, 1.15f, 1.3f, 1.5f, 1.7f)
         for (t in skillTmpls) {
             var best: Hit? = null
             for (sc in scales) {
                 val scaled = scaleGray(t.gray, sc) ?: continue
-                val pos = nccBestPos(gray, scaled, stepDiv = 8) ?: continue
+                val pos = nccBestPos(gray, scaled, stepDiv = 4) ?: continue
                 // 記事方式: 見本の外側に文字インクが残っていたら減点（「毒」→「紫毒姫」誤ヒット防止）
                 val pen = outsideInkPenalty(gray, pos.x, pos.y, pos.w, pos.h)
                 val score = (pos.score - pen).coerceAtLeast(0f)
@@ -234,11 +234,11 @@ object CharmTemplateReader {
         val bottom = min(ih, skill.y + skill.h + skill.h / 2)
         val region = subRect(gray, left, top, right, bottom) ?: return null
         var bestN: Int? = null
-        var best = 0.36f
+        var best = 0.32f
         for ((n, g) in digitTmpls) {
-            for (sc in floatArrayOf(1.0f, 1.2f, 0.85f, 1.4f)) {
+            for (sc in floatArrayOf(0.7f, 0.85f, 1.0f, 1.15f, 1.3f, 1.5f, 1.8f)) {
                 val scaled = scaleGray(g, sc) ?: continue
-                val s = nccBestPos(region, scaled, stepDiv = 6)?.score ?: -1f
+                val s = nccBestPos(region, scaled, stepDiv = 3)?.score ?: -1f
                 if (s > best) {
                     best = s
                     bestN = n
@@ -248,33 +248,91 @@ object CharmTemplateReader {
         return bestN
     }
 
+    /**
+     * assets/charm_templates/slots の slot0〜slot3 と照合してスロット数を返す。
+     * 複数領域（スキル下・固定相対座標・画像下部帯）を試し、最高スコアを採用。
+     */
     private fun matchSlotsBelow(gray: Array<IntArray>, anchorY: Int, anchorX: Int): Int {
         if (slotTmpls.isEmpty()) return -1
         val ih = gray.size
         val iw = gray[0].size
-        val top = anchorY.coerceIn(0, ih - 1)
-        val bottom = min(ih, top + max(40, (ih * 0.18f).toInt()))
-        val left = max(0, anchorX - 20)
-        val right = min(iw, anchorX + max(120, iw / 2))
-        val region = subRect(gray, left, top, right, bottom) ?: return -1
+        val regions = mutableListOf<Array<IntArray>>()
+        // 1) スキル行の下
+        run {
+            val top = anchorY.coerceIn(0, ih - 1)
+            val bottom = min(ih, top + max(48, (ih * 0.22f).toInt()))
+            val left = max(0, anchorX - 40)
+            val right = min(iw, anchorX + max(160, iw / 2))
+            subRect(gray, left, top, right, bottom)?.let { regions += it }
+        }
+        // 2) 固定相対（CropRegion.SLOT 相当）
+        run {
+            val left = (iw * CropRegion.SLOT[0]).toInt()
+            val top = (ih * CropRegion.SLOT[1]).toInt()
+            val right = (iw * CropRegion.SLOT[2]).toInt()
+            val bottom = (ih * CropRegion.SLOT[3]).toInt()
+            subRect(gray, left, top, right, bottom)?.let { regions += it }
+        }
+        // 3) パネル下半分中央帯
+        run {
+            val left = (iw * 0.35f).toInt()
+            val top = (ih * 0.55f).toInt()
+            val right = (iw * 0.75f).toInt()
+            val bottom = (ih * 0.85f).toInt()
+            subRect(gray, left, top, right, bottom)?.let { regions += it }
+        }
+        if (regions.isEmpty()) return -1
+        return bestSlotInRegions(regions)
+    }
+
+    private fun bestSlotInRegions(regions: List<Array<IntArray>>): Int {
         val scores = mutableMapOf<Int, Float>()
+        val scales = floatArrayOf(0.7f, 0.85f, 1.0f, 1.15f, 1.3f, 1.5f, 1.7f)
         for ((n, g) in slotTmpls) {
             var best = -1f
-            for (sc in floatArrayOf(1.0f, 1.15f, 0.85f, 1.3f)) {
-                val scaled = scaleGray(g, sc) ?: continue
-                val s = nccBestPos(region, scaled, stepDiv = 5)?.score ?: -1f
-                if (s > best) best = s
+            for (region in regions) {
+                for (sc in scales) {
+                    val scaled = scaleGray(g, sc) ?: continue
+                    val s = nccBestPos(region, scaled, stepDiv = 3)?.score ?: -1f
+                    if (s > best) best = s
+                }
             }
             scores[n] = best
         }
-        // slot0(---)は区切り線に誤反応しやすいので、他が近いときは非0を優先
+        // slot0(---)は線に誤反応しやすい → 非0が十分高ければ優先
         val bestNonZero = scores.filter { it.key > 0 }.maxByOrNull { it.value }
         val score0 = scores[0] ?: -1f
-        if (bestNonZero != null && bestNonZero.value >= 0.40f) {
-            if (score0 < bestNonZero.value + 0.12f) return bestNonZero.key
+        if (bestNonZero != null && bestNonZero.value >= 0.38f) {
+            if (score0 < bestNonZero.value + 0.10f) return bestNonZero.key
         }
         val best = scores.maxByOrNull { it.value } ?: return -1
-        return if (best.value >= 0.40f) best.key else -1
+        return if (best.value >= 0.36f) best.key else -1
+    }
+
+    /**
+     * 外部からスロットだけテンプレ照合したいとき用。
+     * @return 0..3 または -1
+     */
+    fun matchSlotsOnly(context: Context, bitmap: Bitmap): Int {
+        ensureLoaded(context)
+        if (slotTmpls.isEmpty()) return -1
+        val work = downscale(bitmap, 720)
+        val gray = toGray(work)
+        val ih = gray.size
+        val iw = gray[0].size
+        val regions = listOfNotNull(
+            subRect(gray, (iw * CropRegion.SLOT[0]).toInt(), (ih * CropRegion.SLOT[1]).toInt(),
+                (iw * CropRegion.SLOT[2]).toInt(), (ih * CropRegion.SLOT[3]).toInt()),
+            subRect(gray, (iw * 0.30f).toInt(), (ih * 0.25f).toInt(),
+                (iw * 0.70f).toInt(), (ih * 0.45f).toInt()),
+            subRect(gray, (iw * 0.35f).toInt(), (ih * 0.50f).toInt(),
+                (iw * 0.75f).toInt(), (ih * 0.80f).toInt()),
+            // 画像全体も念のため（小さいテンプレなのでOK）
+            gray
+        )
+        val result = bestSlotInRegions(regions)
+        if (work !== bitmap) work.recycle()
+        return result
     }
 
     private data class PosHit(val score: Float, val x: Int, val y: Int, val w: Int, val h: Int)
