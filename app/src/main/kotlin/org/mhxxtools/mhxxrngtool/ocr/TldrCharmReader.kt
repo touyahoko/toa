@@ -39,13 +39,34 @@ object TldrCharmReader {
     suspend fun read(context: Context, src: Bitmap): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
-                val quad = detectPanelQuad(src)
-                val aligned = if (quad != null) {
-                    warpPerspective(src, quad, CANON_W, CANON_H)
+                // OpenCV 優先: ORB+RANSAC 射影 + morphology トップハット
+                var usedOpenCv = false
+                val aligned: Bitmap
+                val enhanced: Bitmap
+                if (OpenCvBridge.ensureInit()) {
+                    val cvAligned = OpenCvBridge.alignToCanonical(src, CANON_W, CANON_H)
+                    if (cvAligned != null) {
+                        aligned = cvAligned
+                        enhanced = OpenCvBridge.topHat(aligned) ?: topHatEnhance(aligned)
+                        usedOpenCv = true
+                    } else {
+                        val quad = detectPanelQuad(src)
+                        aligned = if (quad != null) {
+                            warpPerspective(src, quad, CANON_W, CANON_H)
+                        } else {
+                            letterboxToCanon(src, CANON_W, CANON_H)
+                        }
+                        enhanced = OpenCvBridge.topHat(aligned) ?: topHatEnhance(aligned)
+                    }
                 } else {
-                    letterboxToCanon(src, CANON_W, CANON_H)
+                    val quad = detectPanelQuad(src)
+                    aligned = if (quad != null) {
+                        warpPerspective(src, quad, CANON_W, CANON_H)
+                    } else {
+                        letterboxToCanon(src, CANON_W, CANON_H)
+                    }
+                    enhanced = topHatEnhance(aligned)
                 }
-                val enhanced = topHatEnhance(aligned)
 
                 // ML Kit 固定座標 OCR（正規化後画像）
                 val mlCharm = mlKitFixedRead(enhanced)
@@ -70,7 +91,7 @@ object TldrCharmReader {
                 }
 
                 var conf = 0.50f
-                if (quad != null) conf += 0.12f
+                if (usedOpenCv) conf += 0.15f
                 if (mlCharm.skills.isNotEmpty()) conf += 0.15f
                 if (tmpl != null && tmpl.charm.skills.isNotEmpty()) conf += 0.12f
                 if (merged.skills.isNotEmpty()) conf += 0.08f
@@ -87,7 +108,7 @@ object TldrCharmReader {
 
                 val note = buildString {
                     append("tldr+mlkit ")
-                    append(if (quad != null) "warp" else "letterbox")
+                    append(if (usedOpenCv) "opencv" else "fallback")
                     append(" ml=${mlCharm.skills.size}")
                     append(" tmpl=${tmpl?.charm?.skills?.size ?: 0}")
                     append(" → ")
