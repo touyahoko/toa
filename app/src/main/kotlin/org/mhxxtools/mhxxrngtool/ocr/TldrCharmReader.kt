@@ -68,15 +68,17 @@ object TldrCharmReader {
                     enhanced = topHatEnhance(aligned)
                 }
 
-                // ML Kit 固定座標 OCR（正規化後画像）
-                val mlCharm = mlKitFixedRead(enhanced)
+                // ML Kit はカラー射影画像、テンプレはトップハット画像
+                val mlCharm = mlKitFixedRead(aligned)
+                val mlCharm2 = mlKitFixedRead(enhanced)
 
                 // テンプレ照合
                 val tmpl = CharmTemplateReader.read(context, enhanced).getOrNull()
                     ?: CharmTemplateReader.read(context, aligned).getOrNull()
 
                 val slotByHeight = detectSlotsByBlobHeight(enhanced)
-                val merged = mergeAll(mlCharm, tmpl?.charm, slotByHeight)
+                val merged0 = mergeAll(mlCharm, tmpl?.charm, slotByHeight)
+                val merged = mergeAll(merged0, mlCharm2, slotByHeight)
 
                 aligned.recycle()
                 if (enhanced !== aligned) enhanced.recycle()
@@ -99,7 +101,7 @@ object TldrCharmReader {
                 if (merged.skills.size >= 2) conf += 0.05f
                 conf = conf.coerceIn(0.5f, 0.99f)
 
-                if (conf < 0.68f || merged.skills.isEmpty()) {
+                if (merged.skills.isEmpty()) {
                     error(
                         "認識の自信が低いです（conf=${"%.2f".format(conf)}）。\n" +
                             "正面からパネル全体が入るよう撮り直してください。"
