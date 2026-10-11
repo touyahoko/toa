@@ -167,13 +167,17 @@ object CharmTemplateReader {
             for (sc in scales) {
                 val scaled = scaleGray(t.gray, sc) ?: continue
                 val pos = nccBestPos(gray, scaled, stepDiv = 8) ?: continue
-                if (pos.score >= minScore && (best == null || pos.score > best.score)) {
-                    best = Hit(t.name, pos.score, pos.x, pos.y, pos.w, pos.h)
+                // 記事方式: 見本の外側に文字インクが残っていたら減点（「毒」→「紫毒姫」誤ヒット防止）
+                val pen = outsideInkPenalty(gray, pos.x, pos.y, pos.w, pos.h)
+                val score = (pos.score - pen).coerceAtLeast(0f)
+                if (score >= minScore && (best == null || score > best.score)) {
+                    best = Hit(t.name, score, pos.x, pos.y, pos.w, pos.h)
                 }
             }
             if (best != null) hits += best
         }
         hits.sortByDescending { it.score }
+        // 1位と2位の差が小さいスキルは不採用（曖昧）
         val kept = mutableListOf<Hit>()
         for (h in hits) {
             val overlap = kept.any { k ->
@@ -183,6 +187,41 @@ object CharmTemplateReader {
             if (kept.size >= 4) break
         }
         return kept
+    }
+
+    /**
+     * テンプレ矩形の左右に文字っぽい明るい画素が残っていたら減点。
+     * note.com/fwe TL;DR の「部分一致への対応」相当。
+     */
+    private fun outsideInkPenalty(gray: Array<IntArray>, x: Int, y: Int, w: Int, h: Int): Float {
+        val ih = gray.size
+        val iw = gray[0].size
+        val margin = max(4, w / 5)
+        var outside = 0
+        var total = 0
+        val y0 = y.coerceIn(0, ih - 1)
+        val y1 = (y + h).coerceIn(0, ih)
+        // 左
+        val xl0 = (x - margin).coerceAtLeast(0)
+        val xl1 = x.coerceAtLeast(0)
+        for (yy in y0 until y1) {
+            for (xx in xl0 until xl1) {
+                total++
+                if (gray[yy][xx] > 140) outside++
+            }
+        }
+        // 右
+        val xr0 = (x + w).coerceIn(0, iw)
+        val xr1 = (x + w + margin).coerceIn(0, iw)
+        for (yy in y0 until y1) {
+            for (xx in xr0 until xr1) {
+                total++
+                if (gray[yy][xx] > 140) outside++
+            }
+        }
+        if (total == 0) return 0f
+        val ratio = outside.toFloat() / total
+        return (ratio * 0.55f).coerceIn(0f, 0.40f)
     }
 
     private fun matchPointsNear(gray: Array<IntArray>, skill: Hit): Int? {
