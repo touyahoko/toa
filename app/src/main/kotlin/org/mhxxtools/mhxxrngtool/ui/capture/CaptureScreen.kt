@@ -53,8 +53,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
-private const val PREVIEW_W = 1280
-private const val PREVIEW_H = 720
+/** Full HD (1080p) — Switchドック相当。非対応デバイスはドライバ側でフォールバック */
+private const val PREVIEW_W = 1920
+private const val PREVIEW_H = 1080
 
 private val FPS_OPTIONS = listOf(30, 60, 90, 120)
 
