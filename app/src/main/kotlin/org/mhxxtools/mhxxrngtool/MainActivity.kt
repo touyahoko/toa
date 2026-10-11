@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.fragment.app.FragmentActivity
+import org.mhxxtools.mhxxrngtool.ocr.OpenCvBridge
 import org.mhxxtools.mhxxrngtool.ui.MainScreen
 import org.mhxxtools.mhxxrngtool.ui.theme.MhxxRngTheme
 
@@ -18,6 +19,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // OpenCV native (鑑定 TL;DR 射影・トップハット)
+        OpenCvBridge.init()
         enableEdgeToEdge()
         setContent {
             MhxxRngTheme {
