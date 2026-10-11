@@ -1,27 +1,29 @@
 package org.mhxxtools.mhxxrngtool.ocr
 
+import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Rect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * note.com/fwe の TL;DR 方式（スマホ直撮り向け）:
- * 1. 射影で Switch 1280×720 相当にそろえる
- * 2. トップハット風前処理で反射を落とす
- * 3. 固定座標テンプレ照合（CharmTemplateReader）
- * 4. 自信が低いときは失敗（撮り直し）を返す
+ * note.com/fwe TL;DR 方式 + ML Kit 統合
  *
- * OpenCV なしで Android 標準 API のみ使用。
+ * 1. 射影で 1280×720 にそろえる
+ * 2. トップハット風前処理
+ * 3. 固定座標を ML Kit (日+英) で OCR
+ * 4. テンプレ照合とマージ（名前はテンプレ優先、ポイントは両方）
+ * 5. 低自信は撮り直し
  */
 object TldrCharmReader {
 
@@ -31,43 +33,34 @@ object TldrCharmReader {
     data class Result(
         val charm: OcrCharm,
         val note: String,
-        val confidence: Float,
-        val aligned: Bitmap? = null
+        val confidence: Float
     )
 
     suspend fun read(context: Context, src: Bitmap): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
-                // 1. パネル四隅推定 → 射影変換
                 val quad = detectPanelQuad(src)
                 val aligned = if (quad != null) {
                     warpPerspective(src, quad, CANON_W, CANON_H)
                 } else {
-                    // フォールバック: 中央 16:9 クロップ → 正規化
                     letterboxToCanon(src, CANON_W, CANON_H)
                 }
-
-                // 2. トップハット風前処理（反射・ムラ軽減）
                 val enhanced = topHatEnhance(aligned)
 
-                // 3. テンプレ照合（固定座標相当のパネル探索付き）
+                // ML Kit 固定座標 OCR（正規化後画像）
+                val mlCharm = mlKitFixedRead(enhanced)
+
+                // テンプレ照合
                 val tmpl = CharmTemplateReader.read(context, enhanced).getOrNull()
                     ?: CharmTemplateReader.read(context, aligned).getOrNull()
 
-                // 4. スロットを記事方式（○/− の高さ）でも推定
                 val slotByHeight = detectSlotsByBlobHeight(enhanced)
+                val merged = mergeAll(mlCharm, tmpl?.charm, slotByHeight)
 
-                val base = tmpl?.charm
-                val skills = base?.skills.orEmpty()
-                val slots = when {
-                    base != null && base.slots in 0..3 -> base.slots
-                    slotByHeight in 0..3 -> slotByHeight
-                    else -> -1
-                }
+                aligned.recycle()
+                if (enhanced !== aligned) enhanced.recycle()
 
-                if (skills.isEmpty() && slots < 0) {
-                    aligned.recycle()
-                    if (enhanced !== aligned) enhanced.recycle()
+                if (merged.skills.isEmpty() && merged.slots < 0) {
                     error(
                         "スマホ写真から護石を読めませんでした。\n" +
                             "・鑑定パネル全体が入るように\n" +
@@ -76,50 +69,160 @@ object TldrCharmReader {
                     )
                 }
 
-                val charm = OcrCharm(
-                    kind = base?.kind ?: -1,
-                    slots = slots,
-                    skills = skills
-                )
-
-                // 自信度: スキル数・スロット・射影成功
-                var conf = 0.55f
-                if (quad != null) conf += 0.15f
-                if (skills.isNotEmpty()) conf += 0.15f
-                if (skills.size >= 2) conf += 0.05f
-                if (slots in 0..3) conf += 0.10f
-                if (tmpl != null) conf += 0.05f
+                var conf = 0.50f
+                if (quad != null) conf += 0.12f
+                if (mlCharm.skills.isNotEmpty()) conf += 0.15f
+                if (tmpl != null && tmpl.charm.skills.isNotEmpty()) conf += 0.12f
+                if (merged.skills.isNotEmpty()) conf += 0.08f
+                if (merged.slots in 0..3) conf += 0.10f
+                if (merged.skills.size >= 2) conf += 0.05f
                 conf = conf.coerceIn(0.5f, 0.99f)
 
-                // 低自信は失敗扱いに近い注意
-                if (conf < 0.70f || skills.isEmpty()) {
-                    aligned.recycle()
-                    if (enhanced !== aligned) enhanced.recycle()
+                if (conf < 0.68f || merged.skills.isEmpty()) {
                     error(
                         "認識の自信が低いです（conf=${"%.2f".format(conf)}）。\n" +
-                            "もう少し正面から、パネル全体が入るよう撮り直してください。"
+                            "正面からパネル全体が入るよう撮り直してください。"
                     )
                 }
 
                 val note = buildString {
-                    append("tldr-photo ")
+                    append("tldr+mlkit ")
                     append(if (quad != null) "warp" else "letterbox")
-                    append(" tmpl=${tmpl != null}")
-                    append(" slotH=$slotByHeight")
+                    append(" ml=${mlCharm.skills.size}")
+                    append(" tmpl=${tmpl?.charm?.skills?.size ?: 0}")
                     append(" → ")
-                    append(skills.joinToString("+") { "${it.name}+${it.pts}" })
-                    append(" sl=$slots")
+                    append(merged.skills.joinToString("+") { "${it.name}+${it.pts}" })
+                    append(" sl=${merged.slots}")
                 }
-
-                // aligned はデバッグ用に返す場合のみ残す。ここでは解放。
-                if (enhanced !== aligned) enhanced.recycle()
-                aligned.recycle()
-
-                Result(charm, note, conf, aligned = null)
+                Result(merged, note, conf)
             }
         }
 
-    // ── パネル四隅（簡易: 暗い半透明パネル領域の外接矩形） ──────────
+    /** 正規化画像に対し CropRegion を ML Kit で読む */
+    private suspend fun mlKitFixedRead(canon: Bitmap): OcrCharm = coroutineScope {
+        val j1n = async { ocrCrop(canon, CropRegion.SKILL1_NAME) }
+        val j1p = async { ocrCrop(canon, CropRegion.SKILL1_PTS) }
+        val j2n = async { ocrCrop(canon, CropRegion.SKILL2_NAME) }
+        val j2p = async { ocrCrop(canon, CropRegion.SKILL2_PTS) }
+        val js = async { ocrCrop(canon, CropRegion.SLOT) }
+        val jp = async { ocrCrop(canon, CropRegion.PANEL) }
+
+        val t1n = j1n.await()
+        val t1p = j1p.await()
+        val t2n = j2n.await()
+        val t2p = j2p.await()
+        val ts = js.await()
+        val tp = jp.await()
+
+        val skills = mutableListOf<OcrSkill>()
+        parseSkillLine(t1n, t1p)?.let { skills += it }
+        parseSkillLine(t2n, t2p)?.let { skills += it }
+
+        // パネル全体から補完
+        if (skills.isEmpty() && tp.isNotBlank()) {
+            skills += parseOcrCharm(tp).skills
+        } else if (skills.size < 2 && tp.isNotBlank()) {
+            val panel = parseOcrCharm(tp).skills
+            for (s in panel) {
+                if (skills.none { it.globalIdx == s.globalIdx }) {
+                    skills += s
+                    if (skills.size >= 2) break
+                }
+            }
+        }
+
+        var slots = parseSlotText(ts)
+        if (slots < 0 && tp.isNotBlank()) {
+            slots = parseOcrCharm(tp).slots
+        }
+        OcrCharm(-1, slots, skills)
+    }
+
+    private suspend fun ocrCrop(bmp: Bitmap, r: FloatArray): String =
+        AndroidOcr.recognizeCropped(bmp, r[0], r[1], r[2], r[3]).getOrDefault("")
+
+    private fun parseSkillLine(nameText: String, ptsText: String): OcrSkill? {
+        val combined = "$nameText $ptsText"
+        if (isEmptySkill(nameText) && isEmptySkill(ptsText)) return null
+
+        val pts = Regex("\\+?\\s*(\\d{1,2})")
+            .findAll(ptsText + " " + nameText)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .firstOrNull { it in 1..20 }
+            ?: 0
+
+        val fromParse = parseOcrCharm(combined).skills.firstOrNull()
+        if (fromParse != null) {
+            return if (pts > 0) OcrSkill(fromParse.globalIdx, fromParse.name, pts) else fromParse
+        }
+
+        val norm = nameText
+            .replace(Regex("[　\\s]+"), "")
+            .replace(Regex("[+＋]\\d+"), "")
+            .replace(Regex("固有スキル[12]?"), "")
+        if (isEmptySkill(norm)) return null
+
+        for ((alias, idx) in SKILL_ALIASES.entries.sortedByDescending { it.key.length }) {
+            if (alias.length < 2) continue
+            if (norm.contains(alias)) {
+                val name = SKILL_NAMES.getOrNull(idx) ?: alias
+                return OcrSkill(idx, name, pts)
+            }
+        }
+        return null
+    }
+
+    private fun isEmptySkill(t: String): Boolean {
+        val s = t.replace(Regex("[\\s　\\-_ー−–—―=＝]+"), "").trim()
+        return s.isEmpty() || s in setOf("なし", "無", "(無)", "（なし）")
+    }
+
+    private fun parseSlotText(t: String): Int {
+        if (t.isBlank()) return -1
+        parseSlotCrop(t)?.let { return it }
+        val circles = Regex("[○〇◯●◎◉]").findAll(t).count()
+        if (circles in 1..3) return circles
+        val dashes = t.replace(Regex("[\\s　]"), "")
+        if (Regex("^[-_ー−–—―]{2,}$").matches(dashes)) return 0
+        return -1
+    }
+
+    private fun mergeAll(ml: OcrCharm, tmpl: OcrCharm?, slotH: Int): OcrCharm {
+        val skills = mutableListOf<OcrSkill>()
+        val n = maxOf(ml.skills.size, tmpl?.skills?.size ?: 0)
+        for (i in 0 until n) {
+            val m = ml.skills.getOrNull(i)
+            val t = tmpl?.skills?.getOrNull(i)
+            when {
+                t != null && m != null -> {
+                    // 名前はテンプレ（正式名）優先、ポイントは有効な方
+                    val pts = when {
+                        t.pts > 0 -> t.pts
+                        m.pts > 0 -> m.pts
+                        else -> 0
+                    }
+                    skills += OcrSkill(t.globalIdx, t.name, pts)
+                }
+                t != null -> skills += t
+                m != null -> skills += m
+            }
+        }
+        // テンプレに無いが ML だけ読めたスキルを末尾に追加
+        if (tmpl != null) {
+            for (m in ml.skills) {
+                if (skills.none { it.globalIdx == m.globalIdx }) skills += m
+            }
+        }
+        val slots = when {
+            tmpl != null && tmpl.slots in 0..3 -> tmpl.slots
+            ml.slots in 0..3 -> ml.slots
+            slotH in 0..3 -> slotH
+            else -> -1
+        }
+        return OcrCharm(-1, slots, skills.take(2))
+    }
+
+    // ── 射影・前処理（前回と同じ軽量版） ────────────────────────────
 
     private data class Quad(
         val tlX: Float, val tlY: Float,
@@ -132,15 +235,11 @@ object TldrCharmReader {
         val w = bmp.width
         val h = bmp.height
         if (w < 200 || h < 200) return null
-
-        // 縮小してスキャン
         val sw = 160
         val sh = (h * sw / w.toFloat()).roundToInt().coerceAtLeast(90)
         val small = Bitmap.createScaledBitmap(bmp, sw, sh, true)
         val pixels = IntArray(sw * sh)
         small.getPixels(pixels, 0, sw, 0, 0, sw, sh)
-
-        // 暗い半透明UIっぽい画素（低〜中輝度）をマスク
         val mask = BooleanArray(sw * sh)
         for (i in pixels.indices) {
             val c = pixels[i]
@@ -149,31 +248,23 @@ object TldrCharmReader {
             val b = c and 0xFF
             val mx = max(r, max(g, b))
             val mn = min(r, min(g, b))
-            // 暗め〜中間、彩度低め
             mask[i] = mx in 20..140 && (mx - mn) < 55
         }
-
-        // 最大の連結成分（簡易: 行スキャンで bbox）
         var minX = sw; var minY = sh; var maxX = 0; var maxY = 0
         var count = 0
-        for (y in 0 until sh) {
-            for (x in 0 until sw) {
-                if (!mask[y * sw + x]) continue
-                count++
-                if (x < minX) minX = x
-                if (y < minY) minY = y
-                if (x > maxX) maxX = x
-                if (y > maxY) maxY = y
-            }
+        for (y in 0 until sh) for (x in 0 until sw) {
+            if (!mask[y * sw + x]) continue
+            count++
+            if (x < minX) minX = x
+            if (y < minY) minY = y
+            if (x > maxX) maxX = x
+            if (y > maxY) maxY = y
         }
         if (small !== bmp) small.recycle()
         if (count < sw * sh * 0.08f) return null
-
         val bw = maxX - minX + 1
         val bh = maxY - minY + 1
         if (bw < sw * 0.25f || bh < sh * 0.2f) return null
-
-        // 余白を少し内側に
         val padX = bw * 0.04f
         val padY = bh * 0.04f
         val sx = w / sw.toFloat()
@@ -199,10 +290,8 @@ object TldrCharmReader {
         val canvas = Canvas(out)
         canvas.drawColor(Color.BLACK)
         if (ok) {
-            val p = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-            canvas.drawBitmap(src, m, p)
+            canvas.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
         } else {
-            // 失敗時レターボックス
             return letterboxToCanon(src, dw, dh)
         }
         return out
@@ -215,19 +304,13 @@ object TldrCharmReader {
         val scale = min(dw / src.width.toFloat(), dh / src.height.toFloat())
         val nw = src.width * scale
         val nh = src.height * scale
-        val left = (dw - nw) / 2f
-        val top = (dh - nh) / 2f
         val m = Matrix()
         m.setScale(scale, scale)
-        m.postTranslate(left, top)
+        m.postTranslate((dw - nw) / 2f, (dh - nh) / 2f)
         canvas.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG))
         return out
     }
 
-    /**
-     * 記事のトップハット相当:
-     * max(R,G,B) を明るさにし、大きいぼかしを引いて文字線を残す。
-     */
     private fun topHatEnhance(src: Bitmap): Bitmap {
         val w = src.width
         val h = src.height
@@ -236,20 +319,13 @@ object TldrCharmReader {
         val bright = FloatArray(w * h)
         for (i in px.indices) {
             val c = px[i]
-            val r = (c shr 16) and 0xFF
-            val g = (c shr 8) and 0xFF
-            val b = c and 0xFF
-            bright[i] = max(r, max(g, b)) / 255f
+            bright[i] = max((c shr 16) and 0xFF, max((c shr 8) and 0xFF, c and 0xFF)) / 255f
         }
-        // 粗いボックスぼかし（構造要素 ≈ 文字より太い）
         val blur = boxBlur(bright, w, h, radius = max(6, min(w, h) / 40))
         val outPx = IntArray(w * h)
         for (i in bright.indices) {
-            // top-hat: original - opening ≈ bright - blur（簡易）
             val v = ((bright[i] - blur[i]) + 0.15f).coerceIn(0f, 1f)
-            // コントラスト強調
-            val g = (v * 1.6f).coerceIn(0f, 1f)
-            val ig = (g * 255).toInt()
+            val ig = ((v * 1.6f).coerceIn(0f, 1f) * 255).toInt()
             outPx[i] = Color.rgb(ig, ig, ig)
         }
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -261,7 +337,6 @@ object TldrCharmReader {
         val tmp = FloatArray(src.size)
         val out = FloatArray(src.size)
         val r = radius.coerceAtLeast(1)
-        // 横
         for (y in 0 until h) {
             var sum = 0f
             val row = y * w
@@ -275,7 +350,6 @@ object TldrCharmReader {
                 tmp[row + x] = sum / cnt
             }
         }
-        // 縦
         for (x in 0 until w) {
             var sum = 0f
             for (y in 0 until min(h, r)) sum += tmp[y * w + x]
@@ -291,25 +365,18 @@ object TldrCharmReader {
         return out
     }
 
-    /**
-     * スロット欄: 二値化後のかたまりの上下長で ○(長) / −(短) を数える。
-     * 固定相対座標（正規化後の右パネル下寄り）を使用。
-     */
     private fun detectSlotsByBlobHeight(aligned: Bitmap): Int {
         val w = aligned.width
         val h = aligned.height
-        // お守り情報パネル内のスロット行付近（経験的相対座標）
         val left = (w * 0.42f).toInt()
         val top = (h * 0.28f).toInt()
         val right = (w * 0.62f).toInt()
         val bottom = (h * 0.36f).toInt()
         if (right - left < 10 || bottom - top < 5) return -1
-
         val rw = right - left
         val rh = bottom - top
         val px = IntArray(rw * rh)
         aligned.getPixels(px, 0, rw, left, top, rw, rh)
-
         var minB = 255
         var maxB = 0
         val br = IntArray(rw * rh)
@@ -323,11 +390,8 @@ object TldrCharmReader {
         if (maxB - minB < 15) return -1
         val thr = (minB + maxB) / 2
         val bin = BooleanArray(br.size) { br[it] >= thr }
-
-        // 連結成分の高さ
         val visited = BooleanArray(bin.size)
         var longBlobs = 0
-        var shortBlobs = 0
         val stack = ArrayDeque<Int>()
         for (i in bin.indices) {
             if (!bin[i] || visited[i]) continue
@@ -358,9 +422,7 @@ object TldrCharmReader {
             if (size < 8) continue
             val height = maxY - minY + 1
             if (height >= rh * 0.35f) longBlobs++
-            else if (height <= rh * 0.25f) shortBlobs++
         }
-        // ○ の個数 = スロット数
         return longBlobs.coerceIn(0, 3)
     }
 }
