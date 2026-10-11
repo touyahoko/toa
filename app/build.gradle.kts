@@ -37,6 +37,10 @@ android {
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        jniLibs {
+            // OpenCV native .so
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -69,6 +73,9 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
     // ML Kit Latin OCR - 数字読取用 (調合動画解析)
     implementation("com.google.mlkit:text-recognition:16.0.0")
+
+    // OpenCV — 射影(ORB+RANSAC) / トップハット / テンプレ照合 (note TL;DR 方式)
+    implementation("org.opencv:opencv:4.10.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
