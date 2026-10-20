@@ -1,22 +1,16 @@
 package org.mhxxtools.mhxxrngtool.ocr
 
-import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
-
 import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
- * 鑑定ハイブリッド
+ * 鑑定読み取り入口。
  *
- * 優先順位 (Switchスクショ限定で高精度):
- * 1) mhxx-renkin-reader 方式: 1280×720 固定座標 + 見本テンプレート照合
- * 2) 既存 SwitchFixedReader / CharmTemplateReader / ML Kit (フォールバック)
- *
- * スロット不明でもスキルが取れれば成功扱い。
+ * 旧来の ML Kit / ハイブリッド OCR は使わず、
+ * mhxx-renkin-reader と同じ固定座標 + 見本テンプレート照合のみ。
+ * (Switch 16:9 キャプチャ専用)
  */
 object HybridCharmReader {
 
@@ -29,207 +23,22 @@ object HybridCharmReader {
     suspend fun read(context: Context, bitmap: Bitmap): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
-                // ── 1) renkin-reader 方式 (Switch 固定画角) ──────────────
-                val renkin = RenkinSwitchReader.read(context, bitmap)
-                if (renkin != null && renkin.charm.skills.isNotEmpty()) {
-                    return@runCatching Result(
-                        renkin.charm,
-                        renkin.note,
-                        renkin.confidence
+                if (!RenkinSwitchReader.isSwitchCapture(bitmap)) {
+                    error(
+                        "Switchのキャプチャ画像（16:9）を選んでください。\n" +
+                            "例: 1280×720 の錬金結果・鑑定画面のスクリーンショット"
                     )
                 }
-
-                coroutineScope {
-                    // 並列で複数経路 (フォールバック)
-                    val fixedJob = async {
-                        if (SwitchFixedReader.isSwitchCapture(bitmap)) {
-                            SwitchFixedReader.read(bitmap)
-                        } else null
-                    }
-                    val tmplJob = async {
-                        CharmTemplateReader.read(context, bitmap).getOrNull()
-                    }
-                    val panelJob = async {
-                        mlKitPanel(bitmap)
-                    }
-                    val fullJob = async {
-                        runCatching { AndroidOcr.ocrBitmap(bitmap) }.getOrDefault("")
-                    }
-                    val tldrJob = async {
-                        TldrCharmReader.read(context, bitmap).getOrNull()
-                    }
-
-                    val fixed = fixedJob.await()
-                    val tmpl = tmplJob.await()
-                    val panel = panelJob.await()
-                    val fullText = fullJob.await()
-                    val tldr = tldrJob.await()
-                    val fullCharm = if (fullText.isNotBlank()) parseOcrCharm(fullText) else null
-
-                    var merged = OcrCharm(-1, -1, emptyList())
-                    val notes = mutableListOf<String>()
-                    if (renkin != null) notes += "renkin-weak"
-
-                    fun absorb(c: OcrCharm?, tag: String) {
-                        if (c == null) return
-                        val before = merged.skills.size
-                        merged = mergePreferTemplate(merged, c)
-                        if (merged.skills.isEmpty() && c.skills.isNotEmpty()) {
-                            merged = c
-                        } else if (c.skills.isNotEmpty()) {
-                            merged = smartMerge(merged, c)
-                        }
-                        if (merged.slots !in 0..3 && c.slots in 0..3) {
-                            merged = OcrCharm(merged.kind, c.slots, merged.skills)
-                        }
-                        if (merged.skills.size > before || (c.slots in 0..3)) {
-                            notes += tag
-                        }
-                    }
-
-                    absorb(fixed?.charm, "fixed")
-                    absorb(tldr?.charm, "tldr")
-                    absorb(tmpl?.charm, "tmpl")
-                    absorb(panel, "panel-ml")
-                    absorb(fullCharm, "full-ml")
-
-                    val slotT = CharmTemplateReader.matchSlotsOnly(context, bitmap)
-                    if (slotT in 0..3) {
-                        merged = OcrCharm(merged.kind, slotT, merged.skills)
-                        notes += "slotT"
-                    }
-
-                    if (merged.skills.isEmpty()) {
-                        error(
-                            "スキルを認識できませんでした。\n" +
-                                "・Switchキャプチャの鑑定画面をそのまま使ってください\n" +
-                                "・1280×720 (16:9) のスクショ推奨\n" +
-                                "debug: renkin=${renkin != null} fixed=${fixed != null} " +
-                                "tmpl=${tmpl != null} tldr=${tldr != null} " +
-                                "panel=${panel.skills.size} fullLen=${fullText.length}"
-                        )
-                    }
-
-                    var conf = 0.55f
-                    if (fixed != null && fixed.charm.skills.isNotEmpty()) conf += 0.20f
-                    if (tmpl != null && tmpl.charm.skills.isNotEmpty()) conf += 0.12f
-                    if (tldr != null && tldr.charm.skills.isNotEmpty()) conf += 0.10f
-                    if (merged.slots in 0..3) conf += 0.08f
-                    if (merged.skills.size >= 2) conf += 0.05f
-                    conf = conf.coerceIn(0.5f, 0.99f)
-
-                    Result(
-                        merged,
-                        "hybrid [${notes.joinToString("+")}] " +
-                            merged.skills.joinToString("+") { "${it.name}+${it.pts}" } +
-                            " sl=${merged.slots}",
-                        conf
+                val r = RenkinSwitchReader.read(context, bitmap)
+                    ?: error("読み取りに失敗しました（画像形式を確認）")
+                if (r.charm.skills.isEmpty()) {
+                    error(
+                        "スキルを認識できませんでした。\n" +
+                            "・鑑定パネル全体が写った Switch キャプチャを使用\n" +
+                            "・${r.note}"
                     )
                 }
+                Result(r.charm, r.note, r.confidence)
             }
         }
-
-    private suspend fun mlKitPanel(bitmap: Bitmap): OcrCharm {
-        val j1n = AndroidOcr.recognizeCropped(
-            bitmap, CropRegion.SKILL1_NAME[0], CropRegion.SKILL1_NAME[1],
-            CropRegion.SKILL1_NAME[2], CropRegion.SKILL1_NAME[3]
-        ).getOrDefault("")
-        val j1p = AndroidOcr.recognizeCropped(
-            bitmap, CropRegion.SKILL1_PTS[0], CropRegion.SKILL1_PTS[1],
-            CropRegion.SKILL1_PTS[2], CropRegion.SKILL1_PTS[3]
-        ).getOrDefault("")
-        val j2n = AndroidOcr.recognizeCropped(
-            bitmap, CropRegion.SKILL2_NAME[0], CropRegion.SKILL2_NAME[1],
-            CropRegion.SKILL2_NAME[2], CropRegion.SKILL2_NAME[3]
-        ).getOrDefault("")
-        val j2p = AndroidOcr.recognizeCropped(
-            bitmap, CropRegion.SKILL2_PTS[0], CropRegion.SKILL2_PTS[1],
-            CropRegion.SKILL2_PTS[2], CropRegion.SKILL2_PTS[3]
-        ).getOrDefault("")
-        val js = AndroidOcr.recognizeCropped(
-            bitmap, CropRegion.SLOT[0], CropRegion.SLOT[1],
-            CropRegion.SLOT[2], CropRegion.SLOT[3]
-        ).getOrDefault("")
-        val jp = AndroidOcr.recognizeCropped(
-            bitmap, CropRegion.PANEL[0], CropRegion.PANEL[1],
-            CropRegion.PANEL[2], CropRegion.PANEL[3]
-        ).getOrDefault("")
-
-        val skills = mutableListOf<OcrSkill>()
-        parseSkillLoose(j1n, j1p)?.let { skills += it }
-        parseSkillLoose(j2n, j2p)?.let { skills += it }
-        if (skills.isEmpty() && jp.isNotBlank()) {
-            skills += parseOcrCharm(jp).skills
-        }
-        var slots = parseSlotLoose(js)
-        if (slots < 0 && jp.isNotBlank()) slots = parseOcrCharm(jp).slots
-        return OcrCharm(-1, slots, skills)
-    }
-
-    private fun parseSkillLoose(nameText: String, ptsText: String): OcrSkill? {
-        val combined = "$nameText $ptsText"
-        if (isEmptySkill(nameText) && isEmptySkill(ptsText)) return null
-        val pts = Regex("\\+?\\s*(\\d{1,2})")
-            .findAll(ptsText + " " + nameText)
-            .mapNotNull { it.groupValues[1].toIntOrNull() }
-            .firstOrNull { it in 1..20 } ?: 0
-        val fromParse = parseOcrCharm(combined).skills.firstOrNull()
-        if (fromParse != null) {
-            return if (pts > 0) OcrSkill(fromParse.globalIdx, fromParse.name, pts) else fromParse
-        }
-        val norm = nameText.replace(Regex("[　\\s]+"), "")
-            .replace(Regex("[+＋]\\d+"), "")
-            .replace(Regex("固有スキル[12]?"), "")
-        if (isEmptySkill(norm)) return null
-        for ((alias, idx) in SKILL_ALIASES.entries.sortedByDescending { it.key.length }) {
-            if (alias.length < 2) continue
-            if (norm.contains(alias)) {
-                return OcrSkill(idx, SKILL_NAMES.getOrNull(idx) ?: alias, pts)
-            }
-        }
-        return null
-    }
-
-    private fun isEmptySkill(t: String): Boolean {
-        val s = t.replace(Regex("[\\s　\\-_ー−–—―=＝]+"), "").trim()
-        return s.isEmpty() || s in setOf("なし", "無", "(無)", "（なし）")
-    }
-
-    private fun parseSlotLoose(t: String): Int {
-        if (t.isBlank()) return -1
-        parseSlotCrop(t)?.let { return it }
-        val circles = Regex("[○〇◯●◎◉]").findAll(t).count()
-        if (circles in 1..3) return circles
-        val dashes = t.replace(Regex("[\\s　]"), "")
-        if (Regex("^[-_ー−–—―]{2,}$").matches(dashes)) return 0
-        return -1
-    }
-
-    /** 両方のスキルを可能な限り残すマージ */
-    private fun smartMerge(a: OcrCharm, b: OcrCharm): OcrCharm {
-        val skills = mutableListOf<OcrSkill>()
-        fun add(s: OcrSkill) {
-            val i = skills.indexOfFirst { it.globalIdx == s.globalIdx }
-            if (i < 0) {
-                if (skills.size < 2) skills += s
-            } else if (skills[i].pts <= 0 && s.pts > 0) {
-                skills[i] = s
-            }
-        }
-        a.skills.forEach { add(it) }
-        b.skills.forEach { add(it) }
-        val slots = when {
-            a.slots in 0..3 -> a.slots
-            b.slots in 0..3 -> b.slots
-            else -> -1
-        }
-        val kind = a.kind.takeIf { it >= 0 } ?: b.kind
-        return OcrCharm(kind, slots, skills)
-    }
-
-    private fun mergePreferTemplate(base: OcrCharm, tmpl: OcrCharm?): OcrCharm {
-        if (tmpl == null) return base
-        if (base.skills.isEmpty()) return tmpl
-        return smartMerge(base, tmpl)
-    }
 }

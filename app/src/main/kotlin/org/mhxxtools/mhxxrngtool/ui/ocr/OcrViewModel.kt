@@ -8,7 +8,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import org.mhxxtools.mhxxrngtool.ocr.AndroidOcr
 import org.mhxxtools.mhxxrngtool.ocr.HybridCharmReader
-import org.mhxxtools.mhxxrngtool.ocr.CharmLearningModel
 import org.mhxxtools.mhxxrngtool.ocr.OcrCharm
 import org.mhxxtools.mhxxrngtool.ocr.inferKindFromSkills
 
@@ -67,7 +66,7 @@ class OcrViewModel : ViewModel() {
         userKind: Int = -1
     ) {
         searchJob?.cancel()
-        _state.update { OcrUiState(isProcessing = true, ocrStatus = "AI護石認識中（端末内）…") }
+        _state.update { OcrUiState(isProcessing = true, ocrStatus = "renkin方式で認識中（テンプレート照合）…") }
 
         viewModelScope.launch {
             _state.update { it.copy(selectedImageUri = uri.toString()) }
