@@ -27,7 +27,9 @@ data class OcrUiState(
     val searchStatus: String = "",
     val frameResults: List<CharmResult> = emptyList(),
     val totalFound: Int = 0,
-    val autoApplyReady: ApplyData? = null
+    val autoApplyReady: ApplyData? = null,
+    /** 選択画像の Uri 文字列（プレビュー用） */
+    val selectedImageUri: String? = null
 )
 
 data class ApplyData(
@@ -68,6 +70,7 @@ class OcrViewModel : ViewModel() {
         _state.update { OcrUiState(isProcessing = true, ocrStatus = "AI護石認識中（端末内）…") }
 
         viewModelScope.launch {
+            _state.update { it.copy(selectedImageUri = uri.toString()) }
             // ハイブリッド: ML Kit OCR（スキル名）+ テンプレ（ポイント/スロット/検証）
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch

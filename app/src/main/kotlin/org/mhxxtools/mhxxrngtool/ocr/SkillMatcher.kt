@@ -838,22 +838,20 @@ object SkillMatcher {
  * 6092.jpg (1280×720) 実測。スキル名は右側、ポイントはその右。
  */
 object CropRegion {
-    /** スキル1 名（少し広め） */
-    val SKILL1_NAME = floatArrayOf(0.5000f, 0.2150f, 0.6100f, 0.2800f)
-    /** スキル1 ポイント */
-    val SKILL1_PTS  = floatArrayOf(0.5800f, 0.2150f, 0.6800f, 0.2800f)
-    /** スキル2 名（----- の場合は空） */
-    val SKILL2_NAME = floatArrayOf(0.5000f, 0.2600f, 0.6300f, 0.3200f)
-    /** スキル2 ポイント */
-    val SKILL2_PTS  = floatArrayOf(0.5800f, 0.2600f, 0.6800f, 0.3200f)
-    /** スロット ○ / --- */
-    val SLOT        = floatArrayOf(0.4100f, 0.2900f, 0.5600f, 0.3600f)
-    /** 護石パネル全体（フォールバック OCR 用） */
+    /**
+     * mhxx-renkin-reader と同じ 1280×720 基準の相対座標。
+     * NAME1 (655,165)-(800,191) / PTS1 (795,165)-(850,191)
+     * NAME2 (655,194)-(800,218) / PTS2 (795,194)-(850,218)
+     */
+    val SKILL1_NAME = floatArrayOf(655f / 1280f, 165f / 720f, 800f / 1280f, 191f / 720f)
+    val SKILL1_PTS  = floatArrayOf(795f / 1280f, 165f / 720f, 850f / 1280f, 191f / 720f)
+    val SKILL2_NAME = floatArrayOf(655f / 1280f, 194f / 720f, 800f / 1280f, 218f / 720f)
+    val SKILL2_PTS  = floatArrayOf(795f / 1280f, 194f / 720f, 850f / 1280f, 218f / 720f)
+    val SLOT        = floatArrayOf(560f / 1280f, 210f / 720f, 650f / 1280f, 250f / 720f)
     val PANEL       = floatArrayOf(0.2800f, 0.1000f, 0.7200f, 0.4200f)
 
-    // 後方互換（旧コード用）
-    val SKILL1 = floatArrayOf(0.5219f, 0.2292f, 0.6602f, 0.2667f)
-    val SKILL2 = floatArrayOf(0.5219f, 0.2750f, 0.6602f, 0.3056f)
+    val SKILL1 = SKILL1_NAME
+    val SKILL2 = SKILL2_NAME
 }
 
 // ======================================================================

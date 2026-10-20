@@ -5,7 +5,14 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -97,6 +104,29 @@ fun OcrScreen(
                             enabled  = !s.isProcessing && !s.isSearching,
                             modifier = Modifier.weight(1f)
                         ) { Text("ギャラリー") }
+                    }
+
+                    // 選択画像プレビュー
+                    s.selectedImageUri?.let { uriStr ->
+                        val previewBmp = remember(uriStr) {
+                            runCatching {
+                                context.contentResolver.openInputStream(android.net.Uri.parse(uriStr))?.use {
+                                    BitmapFactory.decodeStream(it)
+                                }
+                            }.getOrNull()
+                        }
+                        if (previewBmp != null) {
+                            Image(
+                                bitmap = previewBmp.asImageBitmap(),
+                                contentDescription = "選択した鑑定画像",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1A1A1A))
+                            )
+                        }
                     }
 
                     // OCR 処理中

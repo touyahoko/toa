@@ -10,12 +10,11 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
- * 鑑定ハイブリッド（認識優先・失敗しにくい版）
+ * 鑑定ハイブリッド
  *
- * 1) 元画像をそのまま ML Kit（固定座標）+ テンプレ
- * 2) Switch固定スクショ判定時は SwitchFixedReader
- * 3) OpenCV/射影 TL;DR（補助）
- * 4) 全画面 ML Kit テキスト
+ * 優先順位 (Switchスクショ限定で高精度):
+ * 1) mhxx-renkin-reader 方式: 1280×720 固定座標 + 見本テンプレート照合
+ * 2) 既存 SwitchFixedReader / CharmTemplateReader / ML Kit (フォールバック)
  *
  * スロット不明でもスキルが取れれば成功扱い。
  */
@@ -30,8 +29,18 @@ object HybridCharmReader {
     suspend fun read(context: Context, bitmap: Bitmap): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
+                // ── 1) renkin-reader 方式 (Switch 固定画角) ──────────────
+                val renkin = RenkinSwitchReader.read(context, bitmap)
+                if (renkin != null && renkin.charm.skills.isNotEmpty()) {
+                    return@runCatching Result(
+                        renkin.charm,
+                        renkin.note,
+                        renkin.confidence
+                    )
+                }
+
                 coroutineScope {
-                    // 並列で複数経路
+                    // 並列で複数経路 (フォールバック)
                     val fixedJob = async {
                         if (SwitchFixedReader.isSwitchCapture(bitmap)) {
                             SwitchFixedReader.read(bitmap)
@@ -41,7 +50,6 @@ object HybridCharmReader {
                         CharmTemplateReader.read(context, bitmap).getOrNull()
                     }
                     val panelJob = async {
-                        // パネル相対座標を直接 ML Kit
                         mlKitPanel(bitmap)
                     }
                     val fullJob = async {
@@ -58,15 +66,14 @@ object HybridCharmReader {
                     val tldr = tldrJob.await()
                     val fullCharm = if (fullText.isNotBlank()) parseOcrCharm(fullText) else null
 
-                    // マージ優先: fixed → tldr → tmpl → panel → full
                     var merged = OcrCharm(-1, -1, emptyList())
                     val notes = mutableListOf<String>()
+                    if (renkin != null) notes += "renkin-weak"
 
                     fun absorb(c: OcrCharm?, tag: String) {
                         if (c == null) return
                         val before = merged.skills.size
                         merged = mergePreferTemplate(merged, c)
-                        // mergePreferTemplate は base 空だと tmpl を返すので逆向きも
                         if (merged.skills.isEmpty() && c.skills.isNotEmpty()) {
                             merged = c
                         } else if (c.skills.isNotEmpty()) {
@@ -86,7 +93,6 @@ object HybridCharmReader {
                     absorb(panel, "panel-ml")
                     absorb(fullCharm, "full-ml")
 
-                    // スロットは必ず assets/charm_templates/slots と照合
                     val slotT = CharmTemplateReader.matchSlotsOnly(context, bitmap)
                     if (slotT in 0..3) {
                         merged = OcrCharm(merged.kind, slotT, merged.skills)
@@ -96,11 +102,11 @@ object HybridCharmReader {
                     if (merged.skills.isEmpty()) {
                         error(
                             "スキルを認識できませんでした。\n" +
-                                "・鑑定パネル（スキル名・スロット）がはっきり写るように\n" +
-                                "・反射・ブレを避けて撮影\n" +
-                                "debug: fixed=${fixed != null} tmpl=${tmpl != null} " +
-                                "tldr=${tldr != null} panel=${panel.skills.size} " +
-                                "fullLen=${fullText.length}"
+                                "・Switchキャプチャの鑑定画面をそのまま使ってください\n" +
+                                "・1280×720 (16:9) のスクショ推奨\n" +
+                                "debug: renkin=${renkin != null} fixed=${fixed != null} " +
+                                "tmpl=${tmpl != null} tldr=${tldr != null} " +
+                                "panel=${panel.skills.size} fullLen=${fullText.length}"
                         )
                     }
 
