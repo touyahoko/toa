@@ -244,17 +244,6 @@ class OcrViewModel : ViewModel() {
 
                 val finalList = hits.values.take(DISPLAY_CAP)
                 val total = hits.size
-                // 完全一致が出たら学習モデルに成功例を記録
-                if (total > 0) {
-                    CharmLearningModel.recordSuccess(
-                        context,
-                        OcrCharm(
-                            kind = inferred,
-                            slots = slots,
-                            skills = listOfNotNull(skill1, skill2)
-                        )
-                    )
-                }
                 withContext(Dispatchers.Main) {
                     _state.update {
                         it.copy(
