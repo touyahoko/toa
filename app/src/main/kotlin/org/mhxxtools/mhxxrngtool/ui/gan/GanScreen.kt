@@ -2,11 +2,25 @@ package org.mhxxtools.mhxxrngtool.ui.gan
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,7 +52,7 @@ fun GanScreen(vm: GanViewModel) {
             fontSize = 18.sp
         )
         Text(
-            "発動したいスキルを選び、防具組み合わせを検索します\nデータ: 頑シミュ MHXX ver.0.9",
+            "発動スキルを選び防具組み合わせを検索（頑シミュ MHXX 0.9 データ）",
             color = Color(0xFF9AA3B2),
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
@@ -54,7 +68,6 @@ fun GanScreen(vm: GanViewModel) {
             return
         }
 
-        // タイプ
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(0 to "両方", 1 to "剣士", 2 to "ガンナー").forEach { (v, label) ->
                 FilterChip(
@@ -68,16 +81,19 @@ fun GanScreen(vm: GanViewModel) {
 
         OutlinedTextField(
             value = s.skillQuery,
-            onValueChange = vm::setQuery,
+            onValueChange = { vm.setQuery(it) },
             label = { Text("スキル検索") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
         Spacer(Modifier.height(6.dp))
 
-        // 選択中
         if (s.selected.isNotEmpty()) {
-            Text("選択中: ${s.selected.joinToString(", ")}", color = accent, fontSize = 13.sp)
+            Text(
+                "選択中: ${s.selected.joinToString(", ")}",
+                color = accent,
+                fontSize = 13.sp
+            )
             Spacer(Modifier.height(4.dp))
         }
 
@@ -91,24 +107,34 @@ fun GanScreen(vm: GanViewModel) {
             OutlinedButton(onClick = { vm.clearSelected() }) { Text("クリア") }
         }
         if (s.status.isNotBlank()) {
-            Text(s.status, color = Color(0xFFB0B8C4), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+            Text(
+                s.status,
+                color = Color(0xFFB0B8C4),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
         }
 
         LazyColumn(Modifier = Modifier.weight(1f)) {
-            // スキル一覧（未選択優先で少し表示）
-            if (s.results.isEmpty() || s.selected.isEmpty()) {
+            if (s.results.isEmpty()) {
                 items(s.filteredSkills.take(80), key = { it.name }) { skill ->
                     val on = skill.name in s.selected
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .padding(vertical = 2.dp)
-                            .background(if (on) accent.copy(alpha = 0.25f) else card, RoundedCornerShape(8.dp))
+                            .background(
+                                if (on) accent.copy(alpha = 0.25f) else card,
+                                RoundedCornerShape(8.dp)
+                            )
                             .clickable { vm.toggleSkill(skill.name) }
                             .padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Checkbox(checked = on, onCheckedChange = { vm.toggleSkill(skill.name) })
+                        Checkbox(
+                            checked = on,
+                            onCheckedChange = { vm.toggleSkill(skill.name) }
+                        )
                         Column {
                             Text(skill.name, color = Color.White, fontSize = 14.sp)
                             Text(
@@ -120,8 +146,6 @@ fun GanScreen(vm: GanViewModel) {
                     }
                 }
             }
-
-            // 結果
             items(s.results) { set ->
                 ResultCard(set)
             }
@@ -146,16 +170,17 @@ private fun ResultCard(set: ArmorSet) {
             fontSize = 13.sp
         )
         Spacer(Modifier.height(6.dp))
-        fun line(label: String, name: String?) {
-            Text("$label: ${name ?: "—"}", color = Color.White, fontSize = 13.sp)
-        }
-        line("頭", set.head?.name)
-        line("胴", set.body?.name)
-        line("腕", set.arm?.name)
-        line("腰", set.wst?.name)
-        line("脚", set.leg?.name)
+        Text("頭: ${set.head?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
+        Text("胴: ${set.body?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
+        Text("腕: ${set.arm?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
+        Text("腰: ${set.wst?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
+        Text("脚: ${set.leg?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
         if (set.decos.isNotEmpty()) {
-            Text("珠: ${set.decos.joinToString(", ")}", color = Color(0xFFAEB6C5), fontSize = 12.sp)
+            Text(
+                "珠: ${set.decos.joinToString(", ")}",
+                color = Color(0xFFAEB6C5),
+                fontSize = 12.sp
+            )
         }
         val pts = set.skillTotals.entries.joinToString(" ") { "${it.key}${it.value}" }
         Text(pts, color = Color(0xFF8B93A7), fontSize = 11.sp)

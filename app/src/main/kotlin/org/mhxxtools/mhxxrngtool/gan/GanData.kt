@@ -4,20 +4,21 @@ import android.content.Context
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-/**
- * 願シミュ ver0.9 の CSV を読み込む。
- * assets/gansimu/*.csv （UTF-8）
- */
 object GanData {
 
     @Volatile private var loaded = false
-    var skills: List<SkillDef> = emptyList(); private set
-    var skillByName: Map<String, SkillDef> = emptyMap(); private set
-    /** 系統 -> 発動スキル（ポイント降順） */
-    var skillsByTree: Map<String, List<SkillDef>> = emptyMap(); private set
-    var equip: Map<Part, List<EquipPiece>> = emptyMap(); private set
-    var decos: List<Decoration> = emptyList(); private set
-    var trees: List<String> = emptyList(); private set
+    var skills: List<SkillDef> = emptyList()
+        private set
+    var skillByName: Map<String, SkillDef> = emptyMap()
+        private set
+    var skillsByTree: Map<String, List<SkillDef>> = emptyMap()
+        private set
+    var equip: Map<Part, List<EquipPiece>> = emptyMap()
+        private set
+    var decos: List<Decoration> = emptyList()
+        private set
+    var trees: List<String> = emptyList()
+        private set
 
     fun ensureLoaded(context: Context) {
         if (loaded) return
@@ -47,7 +48,6 @@ object GanData {
         return lines.filter { it.isNotBlank() && !it.startsWith("#") }.map { parseLine(it) }
     }
 
-    /** 簡易 CSV（ダブルクォート対応） */
     private fun parseLine(line: String): List<String> {
         val out = mutableListOf<String>()
         val sb = StringBuilder()
@@ -90,12 +90,11 @@ object GanData {
             val rare = r.getOrNull(3)?.toIntOrNull() ?: 1
             val slots = r.getOrNull(4)?.toIntOrNull() ?: 0
             val skills = linkedMapOf<String, Int>()
-            // スキル系統1,値1 ... 系統5,値5 = indices 15..24
             var i = 15
             while (i + 1 < r.size && i <= 23) {
                 val tree = r[i]
                 val pts = r[i + 1].toIntOrNull()
-                if (!tree.isNullOrBlank() && pts != null && pts != 0) {
+                if (tree.isNotBlank() && pts != null && pts != 0) {
                     skills[tree] = (skills[tree] ?: 0) + pts
                 }
                 i += 2

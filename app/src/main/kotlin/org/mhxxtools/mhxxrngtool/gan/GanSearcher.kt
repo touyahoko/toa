@@ -1,9 +1,5 @@
 package org.mhxxtools.mhxxrngtool.gan
 
-/**
- * 願シミュ風スキル検索。
- * 目標発動スキル → 必要系統ポイントを満たす防具5部位 + 装飾品の組み合わせを列挙。
- */
 object GanSearcher {
 
     data class Target(val skillName: String, val tree: String, val need: Int)
@@ -35,7 +31,6 @@ object GanSearcher {
         val wsts = GanData.equip[Part.WST].orEmpty().filter(::relevant)
         val legs = GanData.equip[Part.LEG].orEmpty().filter(::relevant)
 
-        // 装飾品: 目標系統にプラスがあるもの（スロットサイズ別）
         val decoBySize = (1..3).associateWith { size ->
             GanData.decos.filter { d ->
                 d.slotSize == size && d.skills.any { (t, v) -> t in needByTree && v > 0 }
@@ -48,23 +43,21 @@ object GanSearcher {
         var checked = 0
         val limit = req.maxResults
 
-        // スコア上位に絞って探索量を抑える
-        fun rank(list: List<EquipPiece>): List<EquipPiece> {
+        fun rank(list: List<EquipPiece>): List<EquipPiece?> {
             val scored = list.map { p ->
                 val s = trees.sumOf { t -> maxOf(0, p.skills[t] ?: 0) } * 10 + p.slots
                 p to s
             }.sortedByDescending { it.second }
             val top = scored.take(80).map { it.first }
-            // 空きスロット多めの「穴」候補も少し入れる
             val fillers = list.filter { it.slots >= 2 }.take(20)
             return (top + fillers).distinctBy { it.name }
         }
 
-        val H = rank(heads).ifEmpty { listOf(null) }
-        val B = rank(bodies).ifEmpty { listOf(null) }
-        val A = rank(arms).ifEmpty { listOf(null) }
-        val W = rank(wsts).ifEmpty { listOf(null) }
-        val L = rank(legs).ifEmpty { listOf(null) }
+        val H: List<EquipPiece?> = rank(heads).ifEmpty { listOf(null) }
+        val B: List<EquipPiece?> = rank(bodies).ifEmpty { listOf(null) }
+        val A: List<EquipPiece?> = rank(arms).ifEmpty { listOf(null) }
+        val W: List<EquipPiece?> = rank(wsts).ifEmpty { listOf(null) }
+        val L: List<EquipPiece?> = rank(legs).ifEmpty { listOf(null) }
 
         fun addSkills(acc: MutableMap<String, Int>, piece: EquipPiece?) {
             piece?.skills?.forEach { (t, v) -> acc[t] = (acc[t] ?: 0) + v }
@@ -109,14 +102,15 @@ object GanSearcher {
                         }
                     }
                 }
-                if (best == null || bestScore <= 0 || bestHoleIdx < 0) break
+                val chosen = best
+                if (chosen == null || bestScore <= 0 || bestHoleIdx < 0) break
                 val cap = holes[bestHoleIdx]
-                val left = cap - best.slotSize
+                val left = cap - chosen.slotSize
                 holes.removeAt(bestHoleIdx)
                 if (left > 0) holes.add(left)
                 holes.sortDescending()
-                best.skills.forEach { (t, v) -> totals[t] = (totals[t] ?: 0) + v }
-                used += best.name
+                chosen.skills.forEach { (t, v) -> totals[t] = (totals[t] ?: 0) + v }
+                used += chosen.name
             }
             return if (deficit().isEmpty()) totals to used else null
         }
@@ -128,47 +122,43 @@ object GanSearcher {
                         for (leg in L) {
                             checked++
                             if (checked % 5000 == 0) {
-                                onProgress?.invoke(results.size, "探索中… $checked")
+                                onProgress?.invoke(results.size, "search $checked")
                             }
                             val acc = mutableMapOf<String, Int>()
-                            addSkills(acc, h as EquipPiece?)
-                            addSkills(acc, b as EquipPiece?)
-                            addSkills(acc, a as EquipPiece?)
-                            addSkills(acc, w as EquipPiece?)
-                            addSkills(acc, leg as EquipPiece?)
+                            addSkills(acc, h)
+                            addSkills(acc, b)
+                            addSkills(acc, a)
+                            addSkills(acc, w)
+                            addSkills(acc, leg)
 
-                            // MHXX: スロット数 n = 容量 n の穴が1つ（3なら○○○）
                             val holes = listOf(h, b, a, w, leg).mapNotNull { p ->
-                                val piece = p as EquipPiece?
-                                piece?.slots?.takeIf { it > 0 }
-                            }.sortedDescending().toMutableList()
+                                p?.slots?.takeIf { it > 0 }
+                            }.sortedDescending()
 
-                            val filled = tryFillDecos(acc, holes)
-                            if (filled != null) {
-                                val (totals, decoNames) = filled
-                                val activated = targets.filter { t ->
-                                    (totals[t.tree] ?: 0) >= t.need
-                                }.map { it.skillName }
-                                if (activated.size == targets.size) {
-                                    results += ArmorSet(
-                                        head = h as EquipPiece?,
-                                        body = b as EquipPiece?,
-                                        arm = a as EquipPiece?,
-                                        wst = w as EquipPiece?,
-                                        leg = leg as EquipPiece?,
-                                        decos = decoNames,
-                                        skillTotals = totals.filterKeys { it in needByTree },
-                                        activated = activated
-                                    )
-                                    if (results.size >= limit) break@outer
-                                }
+                            val filled = tryFillDecos(acc, holes) ?: continue
+                            val (totals, decoNames) = filled
+                            val activated = targets.filter { t ->
+                                (totals[t.tree] ?: 0) >= t.need
+                            }.map { it.skillName }
+                            if (activated.size == targets.size) {
+                                results += ArmorSet(
+                                    head = h,
+                                    body = b,
+                                    arm = a,
+                                    wst = w,
+                                    leg = leg,
+                                    decos = decoNames,
+                                    skillTotals = totals.filterKeys { it in needByTree },
+                                    activated = activated
+                                )
+                                if (results.size >= limit) break@outer
                             }
                         }
                     }
                 }
             }
         }
-        onProgress?.invoke(results.size, "完了 $checked 通り")
+        onProgress?.invoke(results.size, "done $checked")
         return results
     }
 }

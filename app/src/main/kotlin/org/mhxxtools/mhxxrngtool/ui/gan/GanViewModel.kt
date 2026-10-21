@@ -23,7 +23,7 @@ data class GanUiState(
     val skillQuery: String = "",
     val filteredSkills: List<SkillDef> = emptyList(),
     val selected: List<String> = emptyList(),
-    val typeFilter: Int = 0, // 0両方 1剣士 2ガンナー
+    val typeFilter: Int = 0,
     val searching: Boolean = false,
     val status: String = "",
     val results: List<ArmorSet> = emptyList()
@@ -38,23 +38,23 @@ class GanViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 GanData.ensureLoaded(getApplication())
+                val positive = GanData.skills.filter { it.points > 0 }.sortedBy { it.name }
                 _state.update {
-                    it.copy(
-                        loaded = true,
-                        filteredSkills = GanData.skills.filter { s -> s.points > 0 }
-                            .sortedBy { s -> s.name }
-                    )
+                    it.copy(loaded = true, filteredSkills = positive)
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(loadError = e.message ?: "読込失敗") }
+                _state.update { it.copy(loadError = e.message ?: "load failed") }
             }
         }
     }
 
     fun setQuery(q: String) {
         val all = GanData.skills.filter { it.points > 0 }
-        val filtered = if (q.isBlank()) all.sortedBy { it.name }
-        else all.filter { it.name.contains(q) || it.tree.contains(q) }.sortedBy { it.name }
+        val filtered = if (q.isBlank()) {
+            all.sortedBy { it.name }
+        } else {
+            all.filter { it.name.contains(q) || it.tree.contains(q) }.sortedBy { it.name }
+        }
         _state.update { it.copy(skillQuery = q, filteredSkills = filtered) }
     }
 
@@ -77,26 +77,23 @@ class GanViewModel(app: Application) : AndroidViewModel(app) {
     fun search() {
         val sel = _state.value.selected
         if (sel.isEmpty()) {
-            _state.update { it.copy(status = "発動スキルを選んでください") }
+            _state.update { it.copy(status = "select skills") }
             return
         }
         searchJob?.cancel()
-        _state.update { it.copy(searching = true, status = "検索中…", results = emptyList()) }
+        _state.update { it.copy(searching = true, status = "searching...", results = emptyList()) }
         val type = _state.value.typeFilter
         searchJob = viewModelScope.launch {
             val results = withContext(Dispatchers.Default) {
-                GanSearcher.search(
-                    SearchRequest(sel, typeFilter = type, maxResults = 40)
-                ) { n, msg ->
-                    _state.update { it.copy(status = "$msg （$n 件）") }
+                GanSearcher.search(SearchRequest(sel, typeFilter = type, maxResults = 40)) { n, msg ->
+                    _state.update { it.copy(status = "$msg ($n)") }
                 }
             }
             _state.update {
                 it.copy(
                     searching = false,
                     results = results,
-                    status = if (results.isEmpty()) "条件を満たす組み合わせなし"
-                    else "${results.size} 件ヒット"
+                    status = if (results.isEmpty()) "no results" else "${results.size} hits"
                 )
             }
         }
@@ -104,6 +101,6 @@ class GanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() {
         searchJob?.cancel()
-        _state.update { it.copy(searching = false, status = "停止") }
+        _state.update { it.copy(searching = false, status = "stopped") }
     }
 }
