@@ -1,0 +1,6 @@
+# 次を削除（旧鑑定）
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ocr/SwitchFixedReader.kt
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ocr/TldrCharmReader.kt
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ocr/CharmLearningModel.kt
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ocr/CharmTemplateReader.kt
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ocr/PanelDetector.kt
