@@ -34,10 +34,10 @@ object RenkinSwitchReader {
     private const val TOPHAT_K = 25
 
     // read.rs 定数
-    private val NAME1 = intArrayOf(655, 165, 800, 191)
-    private val PTS1  = intArrayOf(795, 165, 850, 191)
-    private val NAME2 = intArrayOf(655, 194, 800, 218)
-    private val PTS2  = intArrayOf(795, 194, 850, 218)
+    private val NAME1 = intArrayOf(650, 160, 810, 196)  // 上下左右に余白（見本高29>元26対策）
+    private val PTS1  = intArrayOf(790, 160, 860, 196)
+    private val NAME2 = intArrayOf(650, 189, 810, 223)
+    private val PTS2  = intArrayOf(790, 189, 860, 223)
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247) // x0,y0,x1,y1
     private const val LABEL_SEARCH = 30
     private const val LABEL_MIN = 0.50
@@ -50,7 +50,7 @@ object RenkinSwitchReader {
     private const val DIGIT_MIN = 0.35
     private const val SLOT_MIN = 0.50
     private const val SLOT_MIN_DIFF = 0.20
-    private const val LEFTOVER = 1.0
+    private const val LEFTOVER = 0.5
     private const val RECHECK_MARGIN = 0.20
 
     private data class Tmpl(val id: Int, val mat: Mat)
@@ -256,30 +256,43 @@ object RenkinSwitchReader {
     // ── matching ─────────────────────────────────────────────────────
 
     private fun matchSkill(roiTh: Mat): Pair<Int?, Double> {
-        data class Cand(val id: Int, val score: Double, val x: Int, val tmpl: Mat)
+        data class Cand(val id: Int, val score: Double, val x: Int)
         val cands = mutableListOf<Cand>()
         for (t in skillTmpls) {
-            if (t.mat.cols() > roiTh.cols() || t.mat.rows() > roiTh.rows()) continue
-            val pair = matchNcc(roiTh, t.mat) ?: continue
-            val adj = pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, t.mat.cols())
-            cands += Cand(t.id, adj, pair.second, t.mat)
+            // 見本がROIより大きい場合は高さいっぱいに縮小（サイトの 0.97〜1.03 に加え必要ならさらに）
+            val scales = doubleArrayOf(0.90, 0.97, 1.0, 1.03)
+            for (sc in scales) {
+                var tw = (t.mat.cols() * sc).toInt().coerceAtLeast(1)
+                var th = (t.mat.rows() * sc).toInt().coerceAtLeast(1)
+                if (th > roiTh.rows() || tw > roiTh.cols()) {
+                    val fit = minOf(
+                        roiTh.rows().toDouble() / t.mat.rows(),
+                        roiTh.cols().toDouble() / t.mat.cols()
+                    ) * 0.98
+                    if (fit < 0.5) continue
+                    tw = (t.mat.cols() * fit).toInt().coerceAtLeast(1)
+                    th = (t.mat.rows() * fit).toInt().coerceAtLeast(1)
+                }
+                if (th > roiTh.rows() || tw > roiTh.cols()) continue
+                val scaled = Mat()
+                Imgproc.resize(t.mat, scaled, Size(tw.toDouble(), th.toDouble()))
+                val pair = matchNcc(roiTh, scaled)
+                if (pair == null) { scaled.release(); continue }
+                val adj = pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, scaled.cols())
+                cands += Cand(t.id, adj, pair.second)
+                // scaled は Cand に保持しないので解放（スコアだけ使う）
+                scaled.release()
+            }
         }
         if (cands.isEmpty()) return null to -1.0
         cands.sortByDescending { it.score }
         var best = cands[0]
         var margin = if (cands.size > 1) best.score - cands[1].score else best.score + 1.0
 
-        // recheck: 1位と2位が近いとき、差分画素だけで再比較
-        if (cands.size > 1 && margin < RECHECK_MARGIN) {
-            val a = cands[0]; val b = cands[1]
-            val ra = recheckScore(roiTh, a.tmpl, a.x)
-            val rb = recheckScore(roiTh, b.tmpl, b.x)
-            if (rb > ra) {
-                best = b
-                margin = 0.0
-            } else {
-                margin = max(margin, ra - rb)
-            }
+        // margin が極端に小さいときは 2 位を棄却しやすくする
+        if (cands.size > 1 && margin < 0.02 && best.score < 0.55) {
+            // ほぼ同点 → 信頼できない
+            return null to best.score
         }
         if (best.score < SKILL_MIN) return null to best.score
         return best.id to best.score
