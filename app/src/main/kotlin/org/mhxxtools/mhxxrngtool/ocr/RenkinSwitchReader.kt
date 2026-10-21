@@ -6,29 +6,25 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
+import org.opencv.core.Core
+import org.opencv.core.Mat
+import org.opencv.core.Size
+import org.opencv.imgproc.Imgproc
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sqrt
 
 /**
- * mhxx-renkin-reader の読み取りロジックを Android 向けに移植。
- *
- * Switch キャプチャ (16:9) を 1280×720 に正規化し、
- * renkin-reader と同じ固定座標 + 見本テンプレート照合を行う。
- *
- * 座標 (read.rs):
- *   NAME1 (655,165)-(800,191)  PTS1 (795,165)-(850,191)
- *   NAME2 (655,194)-(800,218)  PTS2 (795,194)-(850,218)
- *   SLOT  cells x=580,604,628  y=224
- *
- * 見本: assets/renkin/{skills,digits,slots}/
- * ※ スマホ直撮りの SIFT 射影変換は含まない（Switchスクショ専用）。
+ * mhxx-renkin-reader と同じ手順:
+ *  1280x720 正規化 → max(R,G,B) → トップハット(k=25)
+ *  → 固定ROI → matchTemplate(TM_CCOEFF_NORMED) + leftover 減点
  */
 object RenkinSwitchReader {
+
+    private const val TAG = "RenkinSwitch"
 
     data class Result(
         val charm: OcrCharm,
@@ -38,27 +34,28 @@ object RenkinSwitchReader {
 
     private const val SW = 1280
     private const val SH = 720
+    private const val TOPHAT_K = 25
 
     private val NAME1 = intArrayOf(655, 165, 800, 191)
     private val PTS1  = intArrayOf(795, 165, 850, 191)
     private val NAME2 = intArrayOf(655, 194, 800, 218)
     private val PTS2  = intArrayOf(795, 194, 850, 218)
-    private val SLOT_CELLS = intArrayOf(580, 604, 628)
+    private val SLOT_X = intArrayOf(580, 604, 628)
     private const val SLOT_Y = 224
-    private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
+    private val SLOT_BOX = intArrayOf(-1, -2, 17, 18)
 
-    private const val SKILL_MIN = 0.50f
-    private const val SKILL_MARGIN = 0.03f
-    private const val DIGIT_MIN = 0.45f
-    private const val SLOT_MIN = 0.42f
+    private const val SKILL_MIN = 0.35
+    private const val DIGIT_MIN = 0.40
+    private const val SLOT_MIN = 0.40
+    private const val LEFTOVER = 1.0
 
-    private data class Gray(val w: Int, val h: Int, val px: IntArray)
+    private data class Tmpl(val id: Int, val mat: Mat)
 
     @Volatile private var loaded = false
-    private var skillTmpls: List<Pair<Int, Gray>> = emptyList()
-    private var digitTmpls: List<Pair<Int, Gray>> = emptyList()
-    private var circleTmpl: Gray? = null
-    private var dashTmpl: Gray? = null
+    private val skillTmpls = mutableListOf<Tmpl>()
+    private val digitTmpls = mutableListOf<Tmpl>()
+    private var circleMat: Mat? = null
+    private var dashMat: Mat? = null
 
     fun isSwitchCapture(bmp: Bitmap): Boolean {
         if (bmp.width < 640 || bmp.height < 360) return false
@@ -66,80 +63,81 @@ object RenkinSwitchReader {
     }
 
     suspend fun read(context: Context, bitmap: Bitmap): Result? = withContext(Dispatchers.Default) {
+        if (!OpenCvBridge.ensureInit()) {
+            return@withContext Result(OcrCharm(-1, -1, emptyList()), "OpenCV未初期化", 0f)
+        }
         ensureLoaded(context)
         if (skillTmpls.isEmpty()) {
-            return@withContext Result(
-                OcrCharm(-1, -1, emptyList()),
-                "renkin: assets/renkin/skills が空です",
-                0f
-            )
+            return@withContext Result(OcrCharm(-1, -1, emptyList()), "assets/renkin/skills が空", 0f)
         }
 
-        // 1) 16:9 Switch → 1280x720 へ縮小
-        // 2) それ以外 → 型紙 reference.png で射影（OpenCV ORB+RANSAC）
-        val screen: Bitmap = when {
+        val screenBmp: Bitmap = when {
             isSwitchCapture(bitmap) -> scaleToScreen(bitmap)
             else -> {
-                val ref = loadReference(context) ?: return@withContext null
-                try {
-                    OpenCvBridge.alignWithReference(bitmap, ref, SW, SH)
-                        ?: return@withContext Result(
-                            OcrCharm(-1, -1, emptyList()),
-                            "renkin: 位置合わせ失敗（Switchキャプチャ推奨）",
-                            0.1f
-                        )
-                } finally {
-                    ref.recycle()
-                }
+                val ref = loadReference(context)
+                if (ref != null) {
+                    try {
+                        OpenCvBridge.alignWithReference(bitmap, ref, SW, SH)
+                            ?: scaleToScreen(bitmap)
+                    } finally {
+                        ref.recycle()
+                    }
+                } else scaleToScreen(bitmap)
             }
         }
+
         try {
-            val name1 = cropAbs(screen, NAME1, 2) ?: return@withContext null
-            val pts1  = cropAbs(screen, PTS1, 2) ?: return@withContext null
-            val name2 = cropAbs(screen, NAME2, 2)
-            val pts2  = cropAbs(screen, PTS2, 2)
+            val rgba = OpenCvBridge.bitmapToMat(screenBmp)
+            val mx = maxChannel(rgba)
+            val th = topHat(mx, TOPHAT_K)
+            rgba.release()
+            mx.release()
 
-            val (s1Id, s1Score) = matchSkill(name1)
-            val (p1, _) = matchPoints(pts1)
-            val (s2Id, s2Score) = if (name2 != null) matchSkill(name2) else (null to 0f)
-            val (p2, _) = if (pts2 != null) matchPoints(pts2) else (null to 0f)
-
-            val skill2Valid = s2Id != null && s2Score >= SKILL_MIN && !looksLikeEmpty(name2)
+            val (s1Id, s1Sc) = matchSkill(th, NAME1)
+            val (p1, p1Sc) = matchDigit(th, PTS1)
+            val (s2Id, s2Sc) = matchSkill(th, NAME2)
+            val (p2, _) = matchDigit(th, PTS2)
+            val (slots, slotNote) = matchSlots(th)
+            th.release()
 
             val skills = mutableListOf<OcrSkill>()
-            if (s1Id != null && s1Score >= SKILL_MIN) {
-                val pts = (p1 ?: 0).coerceIn(0, 20)
-                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "skill$s1Id" }, pts)
+            if (s1Id != null && s1Sc >= SKILL_MIN) {
+                skills += OcrSkill(
+                    s1Id,
+                    SKILL_NAMES.getOrElse(s1Id) { "skill$s1Id" },
+                    (p1 ?: 0).coerceIn(0, 20)
+                )
             }
-            if (skill2Valid && s2Id != null) {
-                val pts = (p2 ?: 0).coerceIn(0, 20)
-                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "skill$s2Id" }, pts)
+            if (s2Id != null && s2Sc >= 0.42) {
+                skills += OcrSkill(
+                    s2Id,
+                    SKILL_NAMES.getOrElse(s2Id) { "skill$s2Id" },
+                    (p2 ?: 0).coerceIn(0, 20)
+                )
             }
-
-            val slots = matchSlots(screen)
 
             if (skills.isEmpty()) {
                 return@withContext Result(
                     OcrCharm(-1, slots, emptyList()),
-                    "renkin-fail s1=%.2f s2=%.2f n=%d".format(s1Score, s2Score, skillTmpls.size),
-                    0.2f
+                    "renkin-fail s1=%.2f s2=%.2f p1=%.2f n=%d".format(s1Sc, s2Sc, p1Sc, skillTmpls.size),
+                    0.15f
                 )
             }
 
             val conf = when {
-                skills.size >= 2 && slots in 0..3 && s1Score >= 0.7f -> 0.97f
+                skills.size >= 2 && slots in 0..3 && s1Sc >= 0.55 -> 0.97f
                 skills.size >= 1 && slots in 0..3 -> 0.90f
-                skills.size >= 1 -> 0.80f
-                else -> 0.5f
+                else -> 0.75f
             }
-            val note = "renkin ${screen.width}x${screen.height} " +
+            val note = "renkin ${SW}x${SH} " +
                 skills.joinToString("+") { "${it.name}+${it.pts}" } +
-                " sl=$slots (s1=%.2f".format(s1Score) +
-                (if (skill2Valid) " s2=%.2f".format(s2Score) else "") + ")"
-
+                " sl=$slots s1=%.2f".format(s1Sc) +
+                (if (skills.size > 1) " s2=%.2f".format(s2Sc) else "") +
+                " $slotNote"
+            Log.i(TAG, note)
             Result(OcrCharm(-1, slots, skills), note, conf)
         } finally {
-            if (screen !== bitmap) screen.recycle()
+            if (screenBmp !== bitmap) screenBmp.recycle()
         }
     }
 
@@ -152,101 +150,173 @@ object RenkinSwitchReader {
         if (loaded) return
         synchronized(this) {
             if (loaded) return
+            if (!OpenCvBridge.ensureInit()) return
+            skillTmpls.clear()
+            digitTmpls.clear()
             val am = context.assets
-            fun loadPngs(dir: String): List<Pair<String, Gray>> {
-                val names = runCatching { am.list(dir)?.toList().orEmpty() }.getOrDefault(emptyList())
-                return names.filter { it.endsWith(".png", true) }.mapNotNull { n ->
-                    runCatching {
-                        am.open("$dir/$n").use { ins ->
-                            val bmp = BitmapFactory.decodeStream(ins) ?: return@runCatching null
-                            val g = toMaxChannel(bmp)
-                            bmp.recycle()
-                            n.substringBeforeLast('.') to g
-                        }
-                    }.getOrNull()
+            fun listPng(dir: String) =
+                runCatching { am.list(dir)?.filter { it.endsWith(".png", true) }.orEmpty() }
+                    .getOrDefault(emptyList())
+
+            for (n in listPng("renkin/skills")) {
+                val id = n.substringBeforeLast('.').toIntOrNull() ?: continue
+                am.open("renkin/skills/$n").use { ins ->
+                    val bmp = BitmapFactory.decodeStream(ins) ?: return@use
+                    val mat = OpenCvBridge.bitmapToMat(bmp)
+                    bmp.recycle()
+                    val gray = maxChannel(mat)
+                    mat.release()
+                    val th = topHat(gray, TOPHAT_K)
+                    gray.release()
+                    skillTmpls += Tmpl(id, th)
                 }
             }
-            skillTmpls = loadPngs("renkin/skills").mapNotNull { (n, g) ->
-                n.toIntOrNull()?.let { it to g }
-            }.sortedBy { it.first }
-            digitTmpls = loadPngs("renkin/digits").mapNotNull { (n, g) ->
-                n.toIntOrNull()?.let { it to g }
+            skillTmpls.sortBy { it.id }
+
+            for (n in listPng("renkin/digits")) {
+                val id = n.substringBeforeLast('.').toIntOrNull() ?: continue
+                am.open("renkin/digits/$n").use { ins ->
+                    val bmp = BitmapFactory.decodeStream(ins) ?: return@use
+                    val mat = OpenCvBridge.bitmapToMat(bmp)
+                    bmp.recycle()
+                    val gray = maxChannel(mat)
+                    mat.release()
+                    val th = topHat(gray, TOPHAT_K)
+                    gray.release()
+                    digitTmpls += Tmpl(id, th)
+                }
             }
-            val slots = loadPngs("renkin/slots")
-            circleTmpl = slots.find { it.first.equals("circle", true) }?.second
-            dashTmpl = slots.find { it.first.equals("dash", true) }?.second
+
+            fun loadSlot(name: String): Mat? = runCatching {
+                am.open("renkin/slots/$name.png").use { ins ->
+                    val bmp = BitmapFactory.decodeStream(ins) ?: return@use null
+                    val mat = OpenCvBridge.bitmapToMat(bmp)
+                    bmp.recycle()
+                    val gray = maxChannel(mat)
+                    mat.release()
+                    val th = topHat(gray, 9)
+                    gray.release()
+                    th
+                }
+            }.getOrNull()
+            circleMat = loadSlot("circle")
+            dashMat = loadSlot("dash")
             loaded = true
+            Log.i(TAG, "loaded skills=${skillTmpls.size} digits=${digitTmpls.size}")
         }
     }
 
-    private fun matchSkill(roi: Gray): Pair<Int?, Float> {
+    private fun matchSkill(screenTh: Mat, rect: IntArray): Pair<Int?, Double> {
+        val roi = crop(screenTh, rect, 1) ?: return null to -1.0
         var bestId: Int? = null
-        var best = -1f
-        var second = -1f
-        for ((id, tmpl) in skillTmpls) {
-            for (sc in floatArrayOf(0.95f, 0.97f, 1.0f, 1.03f, 1.05f)) {
-                val scaled = scaleGray(tmpl, sc) ?: continue
-                if (scaled.w > roi.w || scaled.h > roi.h) continue
-                val s = nccBest(roi, scaled)
-                when {
-                    s > best -> { second = best; best = s; bestId = id }
-                    s > second -> second = s
-                }
+        var best = -1.0
+        var second = -1.0
+        for (t in skillTmpls) {
+            if (t.mat.cols() > roi.cols() || t.mat.rows() > roi.rows()) continue
+            val pair = matchNcc(roi, t.mat) ?: continue
+            val adj = pair.first - LEFTOVER * leftoverRatio(roi, pair.second, t.mat.cols())
+            when {
+                adj > best -> { second = best; best = adj; bestId = t.id }
+                adj > second -> second = adj
             }
         }
+        roi.release()
         if (best < SKILL_MIN) return null to best
-        if (best - second < SKILL_MARGIN && best < 0.72f) return null to best
+        if (best - second < 0.03 && best < 0.55) return null to best
         return bestId to best
     }
 
-    private fun matchPoints(roi: Gray): Pair<Int?, Float> {
-        if (digitTmpls.isEmpty()) return null to 0f
+    private fun matchDigit(screenTh: Mat, rect: IntArray): Pair<Int?, Double> {
+        val roi = crop(screenTh, rect, 2) ?: return null to -1.0
         var bestN: Int? = null
-        var best = -1f
-        for ((n, tmpl) in digitTmpls) {
-            for (sc in floatArrayOf(0.9f, 1.0f, 1.1f, 1.25f, 1.4f)) {
-                val scaled = scaleGray(tmpl, sc) ?: continue
-                if (scaled.w > roi.w || scaled.h > roi.h) continue
-                val s = nccBest(roi, scaled)
-                if (s > best) {
-                    best = s
-                    bestN = n
+        var best = -1.0
+        for (t in digitTmpls) {
+            for (scale in doubleArrayOf(0.85, 1.0, 1.15, 1.3)) {
+                val scaled = Mat()
+                Imgproc.resize(t.mat, scaled, Size(t.mat.cols() * scale, t.mat.rows() * scale))
+                if (scaled.cols() > roi.cols() || scaled.rows() > roi.rows()) {
+                    scaled.release(); continue
+                }
+                val pair = matchNcc(roi, scaled)
+                scaled.release()
+                if (pair != null && pair.first > best) {
+                    best = pair.first
+                    bestN = t.id
                 }
             }
         }
+        roi.release()
         return if (best >= DIGIT_MIN) bestN to best else null to best
     }
 
-    private fun matchSlots(screen: Bitmap): Int {
-        val circle = circleTmpl ?: return -1
-        val dash = dashTmpl ?: return -1
+    private fun matchSlots(screenTh: Mat): Pair<Int, String> {
+        val circle = circleMat ?: return -1 to "no-slot-tmpl"
+        val dash = dashMat ?: return -1 to "no-slot-tmpl"
         var count = 0
-        for (cx in SLOT_CELLS) {
-            val l = (cx + SLOT_CROP[0] - 3).coerceIn(0, SW - 2)
-            val t = (SLOT_Y + SLOT_CROP[1] - 3).coerceIn(0, SH - 2)
-            val r = (cx + SLOT_CROP[2] + 3).coerceIn(l + 1, SW)
-            val b = (SLOT_Y + SLOT_CROP[3] + 3).coerceIn(t + 1, SH)
-            val roi = cropAbs(screen, intArrayOf(l, t, r, b), 0) ?: continue
-            var bestC = -1f
-            var bestD = -1f
-            for (sc in floatArrayOf(0.85f, 1.0f, 1.15f)) {
-                scaleGray(circle, sc)?.let {
-                    if (it.w <= roi.w && it.h <= roi.h) bestC = max(bestC, nccBest(roi, it))
+        val scores = mutableListOf<String>()
+        for (cx in SLOT_X) {
+            val l = (cx + SLOT_BOX[0] - 2).coerceIn(0, SW - 2)
+            val t = (SLOT_Y + SLOT_BOX[1] - 2).coerceIn(0, SH - 2)
+            val r = (cx + SLOT_BOX[2] + 2).coerceIn(l + 1, SW)
+            val b = (SLOT_Y + SLOT_BOX[3] + 2).coerceIn(t + 1, SH)
+            val roi = crop(screenTh, intArrayOf(l, t, r, b), 0) ?: continue
+            var bestC = -1.0
+            var bestD = -1.0
+            for (scale in doubleArrayOf(0.9, 1.0, 1.15)) {
+                fun tryMatch(tmpl: Mat): Double {
+                    val sc = Mat()
+                    Imgproc.resize(tmpl, sc, Size(tmpl.cols() * scale, tmpl.rows() * scale))
+                    if (sc.cols() > roi.cols() || sc.rows() > roi.rows()) {
+                        sc.release(); return -1.0
+                    }
+                    val pair = matchNcc(roi, sc)
+                    sc.release()
+                    return pair?.first ?: -1.0
                 }
-                scaleGray(dash, sc)?.let {
-                    if (it.w <= roi.w && it.h <= roi.h) bestD = max(bestD, nccBest(roi, it))
-                }
+                bestC = max(bestC, tryMatch(circle))
+                bestD = max(bestD, tryMatch(dash))
             }
-            if (bestC >= SLOT_MIN && bestC > bestD + 0.04f) count++
+            roi.release()
+            scores += "c=%.2f/d=%.2f".format(bestC, bestD)
+            if (bestC >= SLOT_MIN && bestC > bestD + 0.05) count++
         }
-        return count.coerceIn(0, 3)
+        return count.coerceIn(0, 3) to scores.joinToString(",")
     }
 
-    private fun looksLikeEmpty(roi: Gray?): Boolean {
-        if (roi == null) return true
-        var bright = 0
-        for (v in roi.px) if (v > 140) bright++
-        return bright.toFloat() / roi.px.size < 0.08f
+    private fun matchNcc(image: Mat, tmpl: Mat): Pair<Double, Int>? {
+        if (tmpl.cols() > image.cols() || tmpl.rows() > image.rows()) return null
+        val result = Mat()
+        return try {
+            Imgproc.matchTemplate(image, tmpl, result, Imgproc.TM_CCOEFF_NORMED)
+            val mm = Core.minMaxLoc(result)
+            mm.maxVal to mm.maxLoc.x.toInt()
+        } catch (e: Throwable) {
+            Log.e(TAG, "matchTemplate failed", e)
+            null
+        } finally {
+            result.release()
+        }
+    }
+
+    private fun leftoverRatio(roi: Mat, matchX: Int, tmplW: Int): Double {
+        val cols = roi.cols()
+        val rows = roi.rows()
+        val data = ByteArray(cols * rows)
+        roi.get(0, 0, data)
+        var total = 0
+        var outside = 0
+        val left = (matchX - 2).coerceAtLeast(0)
+        val right = (matchX + tmplW + 2).coerceAtMost(cols)
+        for (x in 0 until cols) {
+            var colInk = 0
+            for (y in 0 until rows) {
+                if ((data[y * cols + x].toInt() and 0xFF) > 30) colInk++
+            }
+            total += colInk
+            if (x < left || x >= right) outside += colInk
+        }
+        if (total == 0) return 0.0
+        return outside.toDouble() / total
     }
 
     private fun scaleToScreen(src: Bitmap): Bitmap {
@@ -256,131 +326,35 @@ object RenkinSwitchReader {
         return out
     }
 
-    private fun toMaxChannel(bmp: Bitmap): Gray {
-        val w = bmp.width
-        val h = bmp.height
-        val argb = IntArray(w * h)
-        bmp.getPixels(argb, 0, w, 0, 0, w, h)
-        val px = IntArray(w * h)
-        for (i in argb.indices) {
-            val c = argb[i]
-            px[i] = max((c shr 16) and 0xFF, max((c shr 8) and 0xFF, c and 0xFF))
-        }
-        return stretch(Gray(w, h, px))
+    private fun maxChannel(rgba: Mat): Mat {
+        val ch = ArrayList<Mat>(4)
+        Core.split(rgba, ch)
+        val out = Mat()
+        Core.max(ch[0], ch[1], out)
+        Core.max(out, ch[2], out)
+        ch.forEach { it.release() }
+        return out
     }
 
-    private fun stretch(g: Gray): Gray {
-        var lo = 255
-        var hi = 0
-        for (v in g.px) {
-            if (v < lo) lo = v
-            if (v > hi) hi = v
-        }
-        val range = (hi - lo).coerceAtLeast(1)
-        val out = IntArray(g.px.size)
-        for (i in g.px.indices) out[i] = ((g.px[i] - lo) * 255 / range).coerceIn(0, 255)
-        return Gray(g.w, g.h, out)
+    private fun topHat(src: Mat, k: Int): Mat {
+        val kernel = Imgproc.getStructuringElement(
+            Imgproc.MORPH_RECT,
+            Size(k.toDouble(), k.toDouble())
+        )
+        val out = Mat()
+        Imgproc.morphologyEx(src, out, Imgproc.MORPH_TOPHAT, kernel)
+        kernel.release()
+        return out
     }
 
-    private fun cropAbs(bmp: Bitmap, r: IntArray, pad: Int): Gray? {
-        val l = (r[0] - pad).coerceIn(0, bmp.width - 2)
-        val t = (r[1] - pad).coerceIn(0, bmp.height - 2)
-        val rr = (r[2] + pad).coerceIn(l + 1, bmp.width)
-        val b = (r[3] + pad).coerceIn(t + 1, bmp.height)
+    private fun crop(src: Mat, r: IntArray, pad: Int): Mat? {
+        val l = (r[0] - pad).coerceIn(0, src.cols() - 2)
+        val t = (r[1] - pad).coerceIn(0, src.rows() - 2)
+        val rr = (r[2] + pad).coerceIn(l + 1, src.cols())
+        val b = (r[3] + pad).coerceIn(t + 1, src.rows())
         val w = rr - l
         val h = b - t
-        if (w < 2 || h < 2) return null
-        val sub = Bitmap.createBitmap(bmp, l, t, w, h)
-        val g = toMaxChannel(sub)
-        sub.recycle()
-        return g
-    }
-
-    private fun scaleGray(src: Gray, scale: Float): Gray? {
-        if (scale < 0.5f || scale > 2.5f) return null
-        val nw = (src.w * scale).toInt().coerceAtLeast(1)
-        val nh = (src.h * scale).toInt().coerceAtLeast(1)
-        if (nw == src.w && nh == src.h) return src
-        val out = IntArray(nw * nh)
-        for (y in 0 until nh) {
-            val sy = min(src.h - 1, (y / scale).toInt())
-            for (x in 0 until nw) {
-                val sx = min(src.w - 1, (x / scale).toInt())
-                out[y * nw + x] = src.px[sy * src.w + sx]
-            }
-        }
-        return Gray(nw, nh, out)
-    }
-
-    /** OpenCV TM_CCOEFF_NORMED 相当 */
-    private fun nccBest(image: Gray, tmpl: Gray): Float {
-        if (tmpl.w > image.w || tmpl.h > image.h) return -1f
-        val tw = tmpl.w
-        val th = tmpl.h
-        val tN = (tw * th).toDouble()
-        var tSum = 0.0
-        for (v in tmpl.px) tSum += v
-        val tMean = tSum / tN
-        var tVar = 0.0
-        for (v in tmpl.px) {
-            val d = v - tMean
-            tVar += d * d
-        }
-        if (tVar < 1e-6) return -1f
-        val tNorm = sqrt(tVar)
-
-        var best = -1f
-        val maxY = image.h - th
-        val maxX = image.w - tw
-        val stepY = max(1, th / 6)
-        val stepX = max(1, tw / 8)
-
-        fun scoreAt(x: Int, y: Int): Float {
-            var iSum = 0.0
-            for (ty in 0 until th) {
-                val row = (y + ty) * image.w + x
-                for (tx in 0 until tw) iSum += image.px[row + tx]
-            }
-            val iMean = iSum / tN
-            var cross = 0.0
-            var iVar = 0.0
-            var ti = 0
-            for (ty in 0 until th) {
-                val row = (y + ty) * image.w + x
-                for (tx in 0 until tw) {
-                    val iv = image.px[row + tx] - iMean
-                    val tv = tmpl.px[ti] - tMean
-                    cross += iv * tv
-                    iVar += iv * iv
-                    ti++
-                }
-            }
-            if (iVar < 1e-6) return -1f
-            return (cross / (sqrt(iVar) * tNorm)).toFloat()
-        }
-
-        var y = 0
-        while (y <= maxY) {
-            var x = 0
-            while (x <= maxX) {
-                val s = scoreAt(x, y)
-                if (s > best) best = s
-                x += stepX
-            }
-            y += stepY
-        }
-        if (best > 0.35f) {
-            y = 0
-            while (y <= maxY) {
-                var x = 0
-                while (x <= maxX) {
-                    val s = scoreAt(x, y)
-                    if (s > best) best = s
-                    x += max(1, stepX / 2)
-                }
-                y += max(1, stepY / 2)
-            }
-        }
-        return best
+        if (w < 4 || h < 4) return null
+        return Mat(src, org.opencv.core.Rect(l, t, w, h)).clone()
     }
 }
