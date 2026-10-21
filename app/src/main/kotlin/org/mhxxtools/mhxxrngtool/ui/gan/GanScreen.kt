@@ -3,6 +3,7 @@ package org.mhxxtools.mhxxrngtool.ui.gan
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,9 +54,9 @@ fun GanScreen(vm: GanViewModel) {
         )
         Text(
             "発動スキルを選び防具組み合わせを検索（頑シミュ MHXX 0.9 データ）",
+            Modifier.padding(top = 4.dp, bottom = 8.dp),
             color = Color(0xFF9AA3B2),
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+            fontSize = 12.sp
         )
 
         if (s.loadError != null) {
@@ -63,7 +64,7 @@ fun GanScreen(vm: GanViewModel) {
             return
         }
         if (!s.loaded) {
-            CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             Text("データ読込中…", color = Color.Gray)
             return
         }
@@ -109,9 +110,9 @@ fun GanScreen(vm: GanViewModel) {
         if (s.status.isNotBlank()) {
             Text(
                 s.status,
+                Modifier.padding(vertical = 4.dp),
                 color = Color(0xFFB0B8C4),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(vertical = 4.dp)
+                fontSize = 12.sp
             )
         }
 
