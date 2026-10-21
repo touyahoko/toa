@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"/></head>
+<body>
+<script>
+let worker = null;
+let nextId = 1;
+const pending = new Map();
+let ready = false;
+const readyWaiters = [];
+
+function ensureWorker() {
+  if (worker) return;
+  // 同一オリジンの worker（WebViewAssetLoader 経由）
+  worker = new Worker('./worker.js', { type: 'module' });
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    if (msg.type === 'ready') {
+      ready = true;
+      readyWaiters.splice(0).forEach((r) => r());
+      return;
+    }
+    if (msg.type === 'failed') {
+      console.error('wasm failed', msg.message);
+      readyWaiters.splice(0).forEach((r) => r());
+      return;
+    }
+    if (msg.id == null) return;
+    const p = pending.get(msg.id);
+    if (!p) return;
+    pending.delete(msg.id);
+    if (msg.type === 'error') p.reject(new Error(msg.message || 'error'));
+    else p.resolve(msg);
+  };
+  worker.onerror = (ev) => console.error('worker error', ev.message);
+}
+
+function waitReady() {
+  ensureWorker();
+  if (ready) return Promise.resolve();
+  return new Promise((r) => readyWaiters.push(r));
+}
+
+function call(req) {
+  return waitReady().then(
+    () =>
+      new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        worker.postMessage(Object.assign({ id: id }, req));
+      })
+  );
+}
+
+window.__renkinReadFile = async function (b64, mime) {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const blob = new Blob([bytes], { type: mime || 'image/jpeg' });
+    const msg = await call({ type: 'read', file: blob });
+    if (msg.type !== 'read') throw new Error('bad response type ' + msg.type);
+    return JSON.stringify({ ok: true, result: msg.result });
+  } catch (e) {
+    return JSON.stringify({ ok: false, error: e && e.message ? e.message : String(e) });
+  }
+};
+
+window.__renkinPing = function () {
+  return ready ? 'ok' : 'no';
+};
+
+ensureWorker();
+</script>
+</body></html>
