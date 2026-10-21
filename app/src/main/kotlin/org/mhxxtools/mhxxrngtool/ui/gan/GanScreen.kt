@@ -1,0 +1,163 @@
+package org.mhxxtools.mhxxrngtool.ui.gan
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import org.mhxxtools.mhxxrngtool.gan.ArmorSet
+
+@Composable
+fun GanScreen(vm: GanViewModel) {
+    val s by vm.state.collectAsState()
+    val bg = Color(0xFF1A1D23)
+    val card = Color(0xFF252A33)
+    val accent = Color(0xFF4C8BF5)
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(bg)
+            .padding(12.dp)
+    ) {
+        Text(
+            "願シミュ（スキル検索）",
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp
+        )
+        Text(
+            "発動したいスキルを選び、防具組み合わせを検索します\nデータ: 頑シミュ MHXX ver.0.9",
+            color = Color(0xFF9AA3B2),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+        )
+
+        if (s.loadError != null) {
+            Text("読込エラー: ${s.loadError}", color = Color(0xFFFF6B6B))
+            return
+        }
+        if (!s.loaded) {
+            CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally))
+            Text("データ読込中…", color = Color.Gray)
+            return
+        }
+
+        // タイプ
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(0 to "両方", 1 to "剣士", 2 to "ガンナー").forEach { (v, label) ->
+                FilterChip(
+                    selected = s.typeFilter == v,
+                    onClick = { vm.setType(v) },
+                    label = { Text(label) }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = s.skillQuery,
+            onValueChange = vm::setQuery,
+            label = { Text("スキル検索") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Spacer(Modifier.height(6.dp))
+
+        // 選択中
+        if (s.selected.isNotEmpty()) {
+            Text("選択中: ${s.selected.joinToString(", ")}", color = accent, fontSize = 13.sp)
+            Spacer(Modifier.height(4.dp))
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { vm.search() },
+                enabled = !s.searching && s.selected.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = accent)
+            ) { Text(if (s.searching) "検索中…" else "検索") }
+            OutlinedButton(onClick = { vm.stop() }, enabled = s.searching) { Text("停止") }
+            OutlinedButton(onClick = { vm.clearSelected() }) { Text("クリア") }
+        }
+        if (s.status.isNotBlank()) {
+            Text(s.status, color = Color(0xFFB0B8C4), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+
+        LazyColumn(Modifier = Modifier.weight(1f)) {
+            // スキル一覧（未選択優先で少し表示）
+            if (s.results.isEmpty() || s.selected.isEmpty()) {
+                items(s.filteredSkills.take(80), key = { it.name }) { skill ->
+                    val on = skill.name in s.selected
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .background(if (on) accent.copy(alpha = 0.25f) else card, RoundedCornerShape(8.dp))
+                            .clickable { vm.toggleSkill(skill.name) }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = on, onCheckedChange = { vm.toggleSkill(skill.name) })
+                        Column {
+                            Text(skill.name, color = Color.White, fontSize = 14.sp)
+                            Text(
+                                "${skill.tree} ${if (skill.points > 0) "+" else ""}${skill.points}",
+                                color = Color(0xFF8B93A7),
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 結果
+            items(s.results) { set ->
+                ResultCard(set)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResultCard(set: ArmorSet) {
+    val card = Color(0xFF252A33)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .background(card, RoundedCornerShape(10.dp))
+            .padding(12.dp)
+    ) {
+        Text(
+            set.activated.joinToString(" / "),
+            color = Color(0xFF7DCEA0),
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        fun line(label: String, name: String?) {
+            Text("$label: ${name ?: "—"}", color = Color.White, fontSize = 13.sp)
+        }
+        line("頭", set.head?.name)
+        line("胴", set.body?.name)
+        line("腕", set.arm?.name)
+        line("腰", set.wst?.name)
+        line("脚", set.leg?.name)
+        if (set.decos.isNotEmpty()) {
+            Text("珠: ${set.decos.joinToString(", ")}", color = Color(0xFFAEB6C5), fontSize = 12.sp)
+        }
+        val pts = set.skillTotals.entries.joinToString(" ") { "${it.key}${it.value}" }
+        Text(pts, color = Color(0xFF8B93A7), fontSize = 11.sp)
+    }
+}

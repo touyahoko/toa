@@ -36,8 +36,10 @@ import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.capture.CaptureScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
+import org.mhxxtools.mhxxrngtool.ui.gan.GanScreen
+import org.mhxxtools.mhxxrngtool.ui.gan.GanViewModel
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "キャプチャ", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "キャプチャ", "タイマー", "願シミュ")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -48,6 +50,7 @@ fun MainScreen(appState: AppStateViewModel) {
     val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
+    val ganVm: GanViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -199,6 +202,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     onBack = { selectedTab = 5 }
                 )
                 7 -> TimerScreen(vm = timerVm)
+                8 -> GanScreen(vm = ganVm)
             }
         }
     }
