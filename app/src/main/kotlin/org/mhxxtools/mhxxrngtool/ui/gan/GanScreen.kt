@@ -26,7 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier.Modifier
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,33 +46,26 @@ fun GanScreen(vm: GanViewModel) {
             .background(bg)
             .padding(12.dp)
     ) {
-        Text(
-            text = "願シミュ（スキル検索）",
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp
-        )
-        Text(
-            text = "発動スキルを選び防具組み合わせを検索（頑シミュ MHXX 0.9 データ）",
-            color = Color(0xFF9AA3B2),
-            fontSize = 12.sp
-        )
+        Text("願シミュ（スキル検索）", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text("発動スキルを選び防具組み合わせを検索（頑シミュ MHXX 0.9）", color = Color(0xFF9AA3B2), fontSize = 12.sp)
         Spacer(Modifier.height(8.dp))
 
         if (s.loadError != null) {
-            Text(text = "読込エラー: ${s.loadError}", color = Color(0xFFFF6B6B))
+            Text("読込エラー: ${s.loadError}", color = Color(0xFFFF6B6B))
             return@Column
         }
         if (!s.loaded) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-            Text(text = "データ読込中…", color = Color.Gray)
+            Text("データ読込中…", color = Color.Gray)
             return@Column
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(0 to "両方", 1 to "剣士", 2 to "ガンナー").forEach { (v, label) ->
+            listOf(0 to "両方", 1 to "剣士", 2 to "ガンナー").forEach { pair ->
+                val v = pair.first
+                val label = pair.second
                 FilterChip(
                     selected = s.typeFilter == v,
                     onClick = { vm.setType(v) },
@@ -92,11 +85,7 @@ fun GanScreen(vm: GanViewModel) {
         Spacer(Modifier.height(6.dp))
 
         if (s.selected.isNotEmpty()) {
-            Text(
-                text = "選択中: ${s.selected.joinToString(", ")}",
-                color = accent,
-                fontSize = 13.sp
-            )
+            Text("選択中: ${s.selected.joinToString(", ")}", color = accent, fontSize = 13.sp)
             Spacer(Modifier.height(4.dp))
         }
 
@@ -117,14 +106,10 @@ fun GanScreen(vm: GanViewModel) {
         }
 
         if (s.status.isNotBlank()) {
-            Text(
-                text = s.status,
-                color = Color(0xFFB0B8C4),
-                fontSize = 12.sp
-            )
+            Text(s.status, color = Color(0xFFB0B8C4), fontSize = 12.sp)
         }
 
-        LazyColumn(Modifier = Modifier.weight(1f).padding(top = 4.dp)) {
+        LazyColumn(modifier = Modifier.weight(1f).padding(top = 4.dp)) {
             if (s.results.isEmpty()) {
                 items(s.filteredSkills.take(80), key = { it.name }) { skill ->
                     val on = skill.name in s.selected
@@ -140,14 +125,11 @@ fun GanScreen(vm: GanViewModel) {
                             .padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Checkbox(
-                            checked = on,
-                            onCheckedChange = { vm.toggleSkill(skill.name) }
-                        )
+                        Checkbox(checked = on, onCheckedChange = { vm.toggleSkill(skill.name) })
                         Column {
-                            Text(text = skill.name, color = Color.White, fontSize = 14.sp)
+                            Text(skill.name, color = Color.White, fontSize = 14.sp)
                             Text(
-                                text = "${skill.tree} ${if (skill.points > 0) "+" else ""}${skill.points}",
+                                "${skill.tree} ${if (skill.points > 0) "+" else ""}${skill.points}",
                                 color = Color(0xFF8B93A7),
                                 fontSize = 11.sp
                             )
@@ -173,25 +155,21 @@ private fun ResultCard(set: ArmorSet) {
             .padding(12.dp)
     ) {
         Text(
-            text = set.activated.joinToString(" / "),
+            set.activated.joinToString(" / "),
             color = Color(0xFF7DCEA0),
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp
         )
         Spacer(Modifier.height(6.dp))
-        Text(text = "頭: ${set.head?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
-        Text(text = "胴: ${set.body?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
-        Text(text = "腕: ${set.arm?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
-        Text(text = "腰: ${set.wst?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
-        Text(text = "脚: ${set.leg?.name ?: "—"}", color = Color.White, fontSize = 13.sp)
+        Text("頭: ${set.head?.name ?: "-"}", color = Color.White, fontSize = 13.sp)
+        Text("胴: ${set.body?.name ?: "-"}", color = Color.White, fontSize = 13.sp)
+        Text("腕: ${set.arm?.name ?: "-"}", color = Color.White, fontSize = 13.sp)
+        Text("腰: ${set.wst?.name ?: "-"}", color = Color.White, fontSize = 13.sp)
+        Text("脚: ${set.leg?.name ?: "-"}", color = Color.White, fontSize = 13.sp)
         if (set.decos.isNotEmpty()) {
-            Text(
-                text = "珠: ${set.decos.joinToString(", ")}",
-                color = Color(0xFFAEB6C5),
-                fontSize = 12.sp
-            )
+            Text("珠: ${set.decos.joinToString(", ")}", color = Color(0xFFAEB6C5), fontSize = 12.sp)
         }
-        val pts = set.skillTotals.entries.joinToString(" ") { "${it.key}${it.value}" }
-        Text(text = pts, color = Color(0xFF8B93A7), fontSize = 11.sp)
+        val pts = set.skillTotals.entries.joinToString(" ") { e -> "${e.key}${e.value}" }
+        Text(pts, color = Color(0xFF8B93A7), fontSize = 11.sp)
     }
 }
