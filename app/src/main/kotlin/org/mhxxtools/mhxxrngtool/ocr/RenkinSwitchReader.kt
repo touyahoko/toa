@@ -66,7 +66,6 @@ object RenkinSwitchReader {
     }
 
     suspend fun read(context: Context, bitmap: Bitmap): Result? = withContext(Dispatchers.Default) {
-        if (!isSwitchCapture(bitmap)) return@withContext null
         ensureLoaded(context)
         if (skillTmpls.isEmpty()) {
             return@withContext Result(
@@ -76,7 +75,24 @@ object RenkinSwitchReader {
             )
         }
 
-        val screen = scaleToScreen(bitmap)
+        // 1) 16:9 Switch → 1280x720 へ縮小
+        // 2) それ以外 → 型紙 reference.png で射影（OpenCV ORB+RANSAC）
+        val screen: Bitmap = when {
+            isSwitchCapture(bitmap) -> scaleToScreen(bitmap)
+            else -> {
+                val ref = loadReference(context) ?: return@withContext null
+                try {
+                    OpenCvBridge.alignWithReference(bitmap, ref, SW, SH)
+                        ?: return@withContext Result(
+                            OcrCharm(-1, -1, emptyList()),
+                            "renkin: 位置合わせ失敗（Switchキャプチャ推奨）",
+                            0.1f
+                        )
+                } finally {
+                    ref.recycle()
+                }
+            }
+        }
         try {
             val name1 = cropAbs(screen, NAME1, 2) ?: return@withContext null
             val pts1  = cropAbs(screen, PTS1, 2) ?: return@withContext null
@@ -126,6 +142,11 @@ object RenkinSwitchReader {
             if (screen !== bitmap) screen.recycle()
         }
     }
+
+    private fun loadReference(context: Context): Bitmap? =
+        runCatching {
+            context.assets.open("renkin/reference.png").use { BitmapFactory.decodeStream(it) }
+        }.getOrNull()
 
     private fun ensureLoaded(context: Context) {
         if (loaded) return

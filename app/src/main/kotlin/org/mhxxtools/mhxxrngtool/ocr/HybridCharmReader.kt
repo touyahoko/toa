@@ -6,11 +6,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 鑑定読み取り入口。
+ * 鑑定読み取り入口 — mhxx-renkin-reader 方式のみ。
  *
- * 旧来の ML Kit / ハイブリッド OCR は使わず、
- * mhxx-renkin-reader と同じ固定座標 + 見本テンプレート照合のみ。
- * (Switch 16:9 キャプチャ専用)
+ * 1. Switch 16:9 → 1280×720 に正規化
+ * 2. それ以外 → assets/renkin/reference.png で射影位置合わせ
+ * 3. 固定座標 + 見本テンプレート照合（スキル/Pt/スロット）
+ *
+ * 旧 ML Kit OCR / SwitchFixed / Tldr / CharmTemplate は使用しない。
  */
 object HybridCharmReader {
 
@@ -23,18 +25,15 @@ object HybridCharmReader {
     suspend fun read(context: Context, bitmap: Bitmap): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
-                if (!RenkinSwitchReader.isSwitchCapture(bitmap)) {
-                    error(
-                        "Switchのキャプチャ画像（16:9）を選んでください。\n" +
-                            "例: 1280×720 の錬金結果・鑑定画面のスクリーンショット"
-                    )
-                }
                 val r = RenkinSwitchReader.read(context, bitmap)
-                    ?: error("読み取りに失敗しました（画像形式を確認）")
+                    ?: error(
+                        "読み取り失敗。\n" +
+                            "Switchのキャプチャ（16:9）の鑑定画面を選んでください。"
+                    )
                 if (r.charm.skills.isEmpty()) {
                     error(
                         "スキルを認識できませんでした。\n" +
-                            "・鑑定パネル全体が写った Switch キャプチャを使用\n" +
+                            "・錬金結果の鑑定画面（天の護石など）全体が写った画像\n" +
                             "・${r.note}"
                     )
                 }

@@ -70,7 +70,7 @@ class OcrViewModel : ViewModel() {
 
         viewModelScope.launch {
             _state.update { it.copy(selectedImageUri = uri.toString()) }
-            // ハイブリッド: ML Kit OCR（スキル名）+ テンプレ（ポイント/スロット/検証）
+            // mhxx-renkin-reader 方式（固定座標 + 見本テンプレート）
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch
             }

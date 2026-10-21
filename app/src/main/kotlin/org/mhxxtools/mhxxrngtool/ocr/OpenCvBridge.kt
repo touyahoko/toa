@@ -50,6 +50,60 @@ object OpenCvBridge {
 
     fun ensureInit(): Boolean = if (ready.get()) true else init()
 
+    /**
+     * renkin-reader の型紙 (reference.png) を使って 1280x720 に射影。
+     * ORB + RANSAC ホモグラフィ。失敗時は null。
+     */
+    fun alignWithReference(srcBmp: Bitmap, referenceBmp: Bitmap, canonW: Int = 1280, canonH: Int = 720): Bitmap? {
+        if (!ensureInit()) return null
+        val src = bitmapToMat(srcBmp)
+        val refMat = bitmapToMat(referenceBmp)
+        try {
+            val srcGray = Mat()
+            val refGray = Mat()
+            Imgproc.cvtColor(src, srcGray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.cvtColor(refMat, refGray, Imgproc.COLOR_RGBA2GRAY)
+            // 型紙を canonical サイズに
+            val refCanon = Mat()
+            Imgproc.resize(refGray, refCanon, Size(canonW.toDouble(), canonH.toDouble()))
+
+            val orb = ORB.create(3000)
+            val kpSrc = MatOfKeyPoint()
+            val kpRef = MatOfKeyPoint()
+            val desSrc = Mat()
+            val desRef = Mat()
+            orb.detectAndCompute(srcGray, Mat(), kpSrc, desSrc)
+            orb.detectAndCompute(refCanon, Mat(), kpRef, desRef)
+            if (desSrc.empty() || desRef.empty() || kpSrc.rows() < 12 || kpRef.rows() < 12) {
+                return null
+            }
+            val matcher = BFMatcher.create(Core.NORM_HAMMING, true)
+            val matches = MatOfDMatch()
+            matcher.match(desSrc, desRef, matches)
+            val good = matches.toList().sortedBy { it.distance }.take(100).filter { it.distance < 70 }
+            if (good.size < 15) return null
+            val srcPts = MatOfPoint2f()
+            val dstPts = MatOfPoint2f()
+            val sK = kpSrc.toArray()
+            val dK = kpRef.toArray()
+            srcPts.fromList(good.map { Point(sK[it.queryIdx].pt.x, sK[it.queryIdx].pt.y) })
+            dstPts.fromList(good.map { Point(dK[it.trainIdx].pt.x, dK[it.trainIdx].pt.y) })
+            val mask = Mat()
+            val H = Calib3d.findHomography(srcPts, dstPts, Calib3d.RANSAC, 5.0, mask)
+            if (H.empty()) return null
+            val warped = Mat()
+            Imgproc.warpPerspective(src, warped, H, Size(canonW.toDouble(), canonH.toDouble()))
+            return matToBitmap(warped)
+        } catch (e: Throwable) {
+            Log.e(TAG, "alignWithReference failed", e)
+            return null
+        } finally {
+            src.release()
+            refMat.release()
+        }
+    }
+
+
     fun bitmapToMat(bmp: Bitmap): Mat {
         val mat = Mat()
         val copy = if (bmp.config == Bitmap.Config.ARGB_8888) bmp
