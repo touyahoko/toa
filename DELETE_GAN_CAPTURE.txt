@@ -1,0 +1,6 @@
+DELETE:
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/gan/
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ui/gan/
+app/src/main/kotlin/org/mhxxtools/mhxxrngtool/ui/capture/
+app/src/main/assets/gansimu/
+

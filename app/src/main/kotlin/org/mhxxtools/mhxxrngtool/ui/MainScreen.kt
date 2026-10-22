@@ -1,14 +1,30 @@
 package org.mhxxtools.mhxxrngtool.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,12 +50,9 @@ import org.mhxxtools.mhxxrngtool.ui.search.SearchScreen
 import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
-import org.mhxxtools.mhxxrngtool.ui.capture.CaptureScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
-import org.mhxxtools.mhxxrngtool.ui.gan.GanScreen
-import org.mhxxtools.mhxxrngtool.ui.gan.GanViewModel
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "キャプチャ", "タイマー", "願シミュ")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -50,7 +63,6 @@ fun MainScreen(appState: AppStateViewModel) {
     val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
-    val ganVm: GanViewModel = viewModel()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -63,17 +75,14 @@ fun MainScreen(appState: AppStateViewModel) {
         Modifier
             .fillMaxSize()
             .background(HtmlColors.Bg)
-            .then(
-                if (selectedTab == 6) Modifier
-                else Modifier.windowInsetsPadding(WindowInsets.systemBars)
-            )
+            .windowInsetsPadding(WindowInsets.systemBars)
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
                 .background(HtmlColors.Surface)
         ) {
-            if (selectedTab != 6) Row(
+            Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 6.dp),
@@ -96,7 +105,7 @@ fun MainScreen(appState: AppStateViewModel) {
                 }
             }
 
-            if (selectedTab != 6) Row(
+            Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -120,40 +129,34 @@ fun MainScreen(appState: AppStateViewModel) {
                 Spacer(Modifier.weight(1f))
             }
 
-            if (selectedTab != 6) {
-                Spacer(Modifier.height(2.dp))
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 4.dp)
-                ) {
-                    TABS.forEachIndexed { idx, title ->
-                        HtmlTab(
-                            title = title,
-                            selected = selectedTab == idx,
-                            onClick = { selectedTab = idx }
-                        )
-                    }
+            Spacer(Modifier.height(2.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 4.dp)
+            ) {
+                TABS.forEachIndexed { idx, title ->
+                    HtmlTab(
+                        title = title,
+                        selected = selectedTab == idx,
+                        onClick = { selectedTab = idx }
+                    )
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(HtmlColors.Border)
-                )
             }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(HtmlColors.Border)
+            )
         }
 
         Box(
             Modifier
                 .fillMaxSize()
                 .background(HtmlColors.Bg)
-                // キャプチャタブは余白なしで全画面プレビュー
-                .then(
-                    if (selectedTab == 6) Modifier
-                    else Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
-                )
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             when (selectedTab) {
                 0 -> SearchScreen(
@@ -161,7 +164,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 7
+                        selectedTab = 6
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
@@ -169,7 +172,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = comboVm,
                     onResultTap = { frame ->
                         timerVm.setCurrentPosFrame(frame)
-                        selectedTab = 7
+                        selectedTab = 6
                     }
                 )
                 3 -> RewardScreen(vm = rewardVm, kind = appState.kind)
@@ -188,21 +191,10 @@ fun MainScreen(appState: AppStateViewModel) {
                     },
                     onFrameTap = { frame ->
                         timerVm.setTargetFrame(frame)
-                        selectedTab = 7
+                        selectedTab = 6
                     }
                 )
-                6 -> CaptureScreen(
-                    onSnapshotFile = { file ->
-                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                            context, "${context.packageName}.provider", file
-                        )
-                        ocrVm.recognizeFromUri(context, uri, appState.kind)
-                        selectedTab = 5
-                    },
-                    onBack = { selectedTab = 5 }
-                )
-                7 -> TimerScreen(vm = timerVm)
-                8 -> GanScreen(vm = ganVm)
+                6 -> TimerScreen(vm = timerVm)
             }
         }
     }
