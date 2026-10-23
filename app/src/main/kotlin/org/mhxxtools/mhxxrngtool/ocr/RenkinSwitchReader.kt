@@ -34,10 +34,13 @@ object RenkinSwitchReader {
     private const val TOPHAT_K = 25
 
     // read.rs 定数
-    private val NAME1 = intArrayOf(650, 160, 810, 196)  // 上下左右に余白（見本高29>元26対策）
-    private val PTS1  = intArrayOf(790, 160, 860, 196)
-    private val NAME2 = intArrayOf(650, 189, 810, 223)
-    private val PTS2  = intArrayOf(790, 189, 860, 223)
+    // 公式 read.rs と同じ座標 (1280x720)
+    private val NAME1 = intArrayOf(655, 165, 800, 191)
+    private val PTS1  = intArrayOf(795, 165, 850, 191)
+    private val NAME2 = intArrayOf(655, 194, 800, 218)
+    private val PTS2  = intArrayOf(795, 194, 850, 218)
+    private const val NAME_LEFT = 667
+    private const val NAME_SEARCH = 6
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247) // x0,y0,x1,y1
     private const val LABEL_SEARCH = 30
     private const val LABEL_MIN = 0.50
@@ -47,7 +50,7 @@ object RenkinSwitchReader {
     private const val SLOT_SEARCH = 4
 
     private const val SKILL_MIN = 0.35
-    private const val DIGIT_MIN = 0.35
+    private const val DIGIT_MIN = 0.30
     private const val SLOT_MIN = 0.50
     private const val SLOT_MIN_DIFF = 0.20
     private const val LEFTOVER = 0.5
@@ -119,10 +122,18 @@ object RenkinSwitchReader {
 
             val skills = mutableListOf<OcrSkill>()
             if (s1Id != null && s1Sc >= SKILL_MIN) {
-                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, (p1 ?: 0).coerceIn(0, 20))
+                // ポイント未検出時は 0 に落とさず再試行しやすいよう -1 相当を避ける: 最低1は付けない
+                val pts = p1 ?: if (p1Sc >= 0.25) 0 else -1
+                if (pts >= 0) {
+                    skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, pts.coerceIn(0, 20))
+                } else {
+                    // ポイント不明でもスキル名は返す（検索の手がかり）
+                    skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, 0)
+                }
             }
             if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
+                val pts = p2 ?: 0
+                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, pts.coerceIn(0, 20))
             }
 
             if (skills.isEmpty()) {
@@ -278,6 +289,11 @@ object RenkinSwitchReader {
                 Imgproc.resize(t.mat, scaled, Size(tw.toDouble(), th.toDouble()))
                 val pair = matchNcc(roiTh, scaled)
                 if (pair == null) { scaled.release(); continue }
+                // 公式: 名前は左揃え。右に大きくずれて短い別名に吸われるのを防ぐ
+                val preferLeft = (NAME_LEFT - NAME1[0] - NAME_SEARCH)
+                val preferRight = (NAME_LEFT - NAME1[0] + NAME_SEARCH + 8)
+                val xOk = pair.second in preferLeft..preferRight || t.mat.cols() >= 60
+                if (!xOk && pair.first < 0.75) { scaled.release(); continue }
                 val adj = pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, scaled.cols())
                 cands += Cand(t.id, adj, pair.second)
                 // scaled は Cand に保持しないので解放（スコアだけ使う）
@@ -396,16 +412,36 @@ object RenkinSwitchReader {
         return if (total == 0) 0.0 else outside.toDouble() / total
     }
 
-    /** 「-----」判定: 横に薄い帯だけ */
+    /**
+     * 公式 is_dashes: 強い横線が狭い帯に集中していれば「-----」。
+     * 短いスキル名の一画を横線と誤認しないよう、帯内インク比率も見る。
+     */
+        /**
+     * 公式 is_dashes: 強い横線が狭い帯に集中していれば「-----」。
+     */
     private fun isDashes(roi: Mat): Boolean {
         val cols = roi.cols(); val rows = roi.rows()
+        if (cols < 4 || rows < 4) return true
         val data = ByteArray(cols * rows)
         roi.get(0, 0, data)
-        var bright = 0
-        for (v in data) if ((v.toInt() and 0xFF) > 40) bright++
-        val ratio = bright.toFloat() / data.size
-        // 文字が少ない
-        return ratio < 0.06f
+        fun inkAt(x: Int, y: Int) = (data[y * cols + x].toInt() and 0xFF) > 40
+        val rowInk = IntArray(rows) { y ->
+            var n = 0
+            for (x in 0 until cols) if (inkAt(x, y)) n++
+            n
+        }
+        val totalInk = rowInk.sum()
+        if (totalInk < 8) return true
+        val thr = (0.25 * cols).toInt().coerceAtLeast(2)
+        val strong = (0 until rows).filter { rowInk[it] >= thr }
+        if (strong.isEmpty()) return false
+        val first = strong.first()
+        val last = strong.last()
+        if (last - first + 1 > 6) return false
+        val bandFrom = (first - 2).coerceAtLeast(0)
+        val bandTo = (last + 3).coerceAtMost(rows)
+        val band = (bandFrom until bandTo).sumOf { rowInk[it] }
+        return band >= 0.85 * totalInk
     }
 
     private fun tophatRegion(mx: Mat, rect: IntArray): Mat {
