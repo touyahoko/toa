@@ -46,7 +46,7 @@ object RenkinSwitchReader {
     private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
     private const val SLOT_SEARCH = 4
 
-    private const val SKILL_MIN = 0.30
+    private const val SKILL_MIN = 0.35
     private const val DIGIT_MIN = 0.35
     private const val SLOT_MIN = 0.50
     private const val SLOT_MIN_DIFF = 0.20
@@ -260,7 +260,7 @@ object RenkinSwitchReader {
         val cands = mutableListOf<Cand>()
         for (t in skillTmpls) {
             // 見本がROIより大きい場合は高さいっぱいに縮小（サイトの 0.97〜1.03 に加え必要ならさらに）
-            val scales = doubleArrayOf(0.90, 0.97, 1.0, 1.03)
+            val scales = doubleArrayOf(0.85, 0.90, 0.94, 0.97, 1.0, 1.03, 1.06)
             for (sc in scales) {
                 var tw = (t.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (t.mat.rows() * sc).toInt().coerceAtLeast(1)
