@@ -110,30 +110,47 @@ object RenkinSwitchReader {
             val name2 = tophatRegion(mx, NAME2)
             val pts2  = tophatRegion(mx, PTS2)
 
-            val (s1Id, s1Sc) = matchSkill(name1)
+            var (s1Id, s1Sc) = matchSkill(name1)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
-            val (s2Id, s2Sc) = if (skill2Empty) null to 1.0 else matchSkill(name2)
+            var (s2Id, s2Sc) = if (skill2Empty) null to 1.0 else matchSkill(name2)
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
             val (slots, slotNote) = matchSlots(mx)
 
             name1.release(); pts1.release(); name2.release(); pts2.release()
             mx.release()
 
+            // ── 錬金134以外も含む全 SKILL_NAMES を OCR で補強 ──
+            // テンプレ照合は公式134向け見本が強く、非公式スキルは誤マッチしやすいため
+            // スキル名ROIを ML Kit で読み、SkillMatcher で全205スキルに解決する
+            var ocrNote = ""
+            try {
+                val ocr1 = refineSkillByOcr(screenBmp, NAME1, s1Id, s1Sc)
+                if (ocr1 != null) {
+                    s1Id = ocr1.first
+                    s1Sc = ocr1.second
+                    ocrNote += " ocr1=${SKILL_NAMES.getOrElse(s1Id!!) { "?" }}"
+                }
+                if (!skill2Empty) {
+                    val ocr2 = refineSkillByOcr(screenBmp, NAME2, s2Id, s2Sc)
+                    if (ocr2 != null) {
+                        s2Id = ocr2.first
+                        s2Sc = ocr2.second
+                        ocrNote += " ocr2=${SKILL_NAMES.getOrElse(s2Id!!) { "?" }}"
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "ocr refine failed", e)
+            }
+
             val skills = mutableListOf<OcrSkill>()
             if (s1Id != null && s1Sc >= SKILL_MIN) {
-                // ポイント未検出時は 0 に落とさず再試行しやすいよう -1 相当を避ける: 最低1は付けない
-                val pts = p1 ?: if (p1Sc >= 0.25) 0 else -1
-                if (pts >= 0) {
-                    skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, pts.coerceIn(0, 20))
-                } else {
-                    // ポイント不明でもスキル名は返す（検索の手がかり）
-                    skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, 0)
-                }
+                val pts = (p1 ?: 0).coerceIn(0, 20)
+                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, pts)
             }
             if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                val pts = p2 ?: 0
-                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, pts.coerceIn(0, 20))
+                val pts = (p2 ?: 0).coerceIn(0, 20)
+                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, pts)
             }
 
             if (skills.isEmpty()) {
@@ -152,7 +169,7 @@ object RenkinSwitchReader {
             val note = "renkin " + skills.joinToString("+") { "${it.name}+${it.pts}" } +
                 " sl=$slots s1=%.2f".format(s1Sc) +
                 (if (skills.size > 1) " s2=%.2f".format(s2Sc) else " (no-s2)") +
-                " lab=%.2f $slotNote".format(labScore)
+                " lab=%.2f $slotNote$ocrNote".format(labScore)
             Log.i(TAG, note)
             Result(OcrCharm(-1, slots, skills), note, conf)
         } finally {
@@ -419,6 +436,33 @@ object RenkinSwitchReader {
         /**
      * 公式 is_dashes: 強い横線が狭い帯に集中していれば「-----」。
      */
+
+    private suspend fun refineSkillByOcr(
+        screen: android.graphics.Bitmap,
+        rect: IntArray,
+        tmplId: Int?,
+        tmplScore: Double
+    ): Pair<Int, Double>? {
+        val l = rect[0].toFloat() / SW
+        val t0 = rect[1].toFloat() / SH
+        val r = rect[2].toFloat() / SW
+        val b = rect[3].toFloat() / SH
+        val text = AndroidOcr.recognizeCropped(screen, l, t0, r, b).getOrNull()
+            ?.trim().orEmpty()
+        if (text.isBlank()) return null
+        val idx = SkillMatcher.findSkillGlobalIdx(text)
+        if (idx < 0) {
+            android.util.Log.i(TAG, "ocr skill miss text='$text' tmpl=$tmplId sc=$tmplScore")
+            return null
+        }
+        if (tmplId != null && tmplId == idx && tmplScore >= 0.50) return null
+        val preferOcr = tmplId == null || tmplScore < 0.55 || tmplId != idx
+        if (!preferOcr) return null
+        val sc = if (tmplId == idx) maxOf(tmplScore, 0.60) else 0.62
+        android.util.Log.i(TAG, "ocr refine '$text' -> ${SKILL_NAMES.getOrElse(idx){ "?" }}($idx) was=$tmplId/$tmplScore")
+        return idx to sc
+    }
+
     private fun isDashes(roi: Mat): Boolean {
         val cols = roi.cols(); val rows = roi.rows()
         if (cols < 4 || rows < 4) return true
