@@ -80,7 +80,7 @@ fun MainScreen(appState: AppStateViewModel) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(HtmlColors.Surface)
+                .background(HtmlColors.Bg)
         ) {
             Row(
                 Modifier
@@ -148,7 +148,7 @@ fun MainScreen(appState: AppStateViewModel) {
                 Modifier
                     .fillMaxWidth()
                     .height(1.dp)
-                    .background(HtmlColors.Border)
+                    .background(HtmlColors.Border.copy(alpha = 0.6f))
             )
         }
 

@@ -1,4 +1,15 @@
 package org.mhxxtools.mhxxrngtool.ui.timer
+import androidx.compose.ui.graphics.Color
+
+import androidx.compose.foundation.background
+import androidx.compose.material3.CardDefaults
+
+import org.mhxxtools.mhxxrngtool.ui.common.SiteCard
+import org.mhxxtools.mhxxrngtool.ui.common.SitePage
+import org.mhxxtools.mhxxrngtool.ui.common.SitePrimaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteSecondaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteTitle
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +30,7 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
     Column(
         modifier
             .fillMaxSize()
+            .background(HtmlColors.Bg)
             .verticalScroll(rememberScrollState())
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -64,7 +76,7 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
         }
 
         // ── カウントダウン ────────────────────────────────────────
-        Card(Modifier.fillMaxWidth()) {
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = BorderStroke(1.dp, HtmlColors.Border)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("⏱ カウントダウン", fontWeight = FontWeight.Bold)
                 Text(
@@ -140,7 +152,7 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
                         modifier = Modifier.weight(1f),
                         colors = if (s.isRunning) ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
-                        ) else ButtonDefaults.buttonColors()
+                        ) else ButtonDefaults.buttonColors(containerColor = HtmlColors.Accent, contentColor = androidx.compose.ui.graphics.Color.White)
                     ) { Text(if (s.isRunning) "停止" else "開始") }
                     OutlinedButton(onClick = { vm.resetCountdown() }) { Text("リセット") }
                 }
@@ -148,7 +160,7 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
         }
 
         // ── メトロノーム ──────────────────────────────────────────
-        Card(Modifier.fillMaxWidth()) {
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = BorderStroke(1.dp, HtmlColors.Border)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("🎵 1000カウント・メトロノーム", fontWeight = FontWeight.Bold)
                 Text(
@@ -167,7 +179,7 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
                         modifier = Modifier.weight(1f),
                         colors = if (s.metRunning) ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error
-                        ) else ButtonDefaults.buttonColors()
+                        ) else ButtonDefaults.buttonColors(containerColor = HtmlColors.Accent, contentColor = androidx.compose.ui.graphics.Color.White)
                     ) { Text(if (s.metRunning) "停止" else "開始") }
                     OutlinedButton(onClick = { vm.resetMetronome() }) { Text("リセット") }
                 }

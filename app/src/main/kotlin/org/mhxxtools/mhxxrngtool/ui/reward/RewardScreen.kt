@@ -1,4 +1,17 @@
 package org.mhxxtools.mhxxrngtool.ui.reward
+import androidx.compose.ui.graphics.Color
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CardDefaults
+
+import org.mhxxtools.mhxxrngtool.ui.common.SiteCard
+import org.mhxxtools.mhxxrngtool.ui.common.SitePage
+import org.mhxxtools.mhxxrngtool.ui.common.SitePrimaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteSecondaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteTitle
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,10 +29,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun RewardScreen(vm: RewardViewModel, kind: Int, modifier: Modifier = Modifier) {
     val s by vm.state.collectAsStateWithLifecycle()
 
-    Column(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize().background(HtmlColors.Bg)) {
         LazyColumn(Modifier.weight(1f).padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item {
-                Card(Modifier.fillMaxWidth()) {
+                Card(Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = androidx.compose.foundation.BorderStroke(1.dp, HtmlColors.Border)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("📍 現在位置特定（クエスト報酬）", fontWeight = FontWeight.Bold)
                         Text(
@@ -104,7 +117,7 @@ fun RewardScreen(vm: RewardViewModel, kind: Int, modifier: Modifier = Modifier) 
                                 modifier = Modifier.weight(1f),
                                 colors = if (s.isSearching) ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.error
-                                ) else ButtonDefaults.buttonColors()
+                                ) else ButtonDefaults.buttonColors(containerColor = HtmlColors.Accent, contentColor = androidx.compose.ui.graphics.Color.White)
                             ) { Text(if (s.isSearching) "停止" else "現在位置を特定") }
                             OutlinedButton(onClick = { vm.resetSearch() }) { Text("リセット") }
                         }
@@ -120,7 +133,7 @@ fun RewardScreen(vm: RewardViewModel, kind: Int, modifier: Modifier = Modifier) 
                 }
             }
             items(s.results, key = { it.frame }) { r ->
-                Card(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = BorderStroke(1.dp, HtmlColors.Border)) {
                     Text(
                         "F ${r.frame}",
                         Modifier.padding(12.dp),

@@ -1,5 +1,14 @@
 package org.mhxxtools.mhxxrngtool.ui.search
 
+import androidx.compose.material3.CardDefaults
+
+import org.mhxxtools.mhxxrngtool.ui.common.SiteCard
+import org.mhxxtools.mhxxrngtool.ui.common.SitePage
+import org.mhxxtools.mhxxrngtool.ui.common.SitePrimaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteSecondaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteTitle
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -27,7 +36,7 @@ fun SearchScreen(
 ) {
     val s by vm.state.collectAsStateWithLifecycle()
 
-    Column(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize().background(HtmlColors.Bg)) {
 
         // 検索モード切替 (HTML統合ツール準拠)
         TabRow(selectedTabIndex = if (s.mode == SearchMode.SKILL) 0 else 1) {
@@ -40,7 +49,7 @@ fun SearchScreen(
         // ─── 設定パネル ───────────────────────────────────────────────
         LazyColumn(modifier = Modifier.weight(1f)) {
             item {
-                Card(Modifier.fillMaxWidth().padding(8.dp)) {
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = BorderStroke(1.dp, HtmlColors.Border)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
                         if (s.mode == SearchMode.FRAME) {
@@ -55,7 +64,7 @@ fun SearchScreen(
                             LabeledSpinner("出処", ORIGIN_NAMES, ORIGIN_NAMES[s.origin], Modifier.fillMaxWidth()) {
                                 vm.setOrigin(ORIGIN_NAMES.indexOf(it).coerceAtLeast(0))
                             }
-                            Button(onClick = { vm.lookupFrame() }, modifier = Modifier.fillMaxWidth()) {
+                            Button(onClick = { vm.lookupFrame() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = HtmlColors.Accent, contentColor = Color.White)) {
                                 Text("このフレームのお守りを表示")
                             }
                             s.frameCharm?.let { fr ->
@@ -174,7 +183,7 @@ private fun CharmCard(result: org.mhxxtools.mhxxrngtool.rng.CharmResult, onClick
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface)
     ) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(10.dp, 48.dp).background(rarityColor))

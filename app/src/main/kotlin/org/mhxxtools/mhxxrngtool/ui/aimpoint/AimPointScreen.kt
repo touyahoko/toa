@@ -1,5 +1,17 @@
 package org.mhxxtools.mhxxrngtool.ui.aimpoint
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CardDefaults
+
+import org.mhxxtools.mhxxrngtool.ui.common.SiteCard
+import org.mhxxtools.mhxxrngtool.ui.common.SitePage
+import org.mhxxtools.mhxxrngtool.ui.common.SitePrimaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteSecondaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteTitle
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,8 +28,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun AimPointScreen(vm: AimPointViewModel, kind: Int, modifier: Modifier = Modifier) {
     val s by vm.state.collectAsStateWithLifecycle()
 
-    Column(modifier.fillMaxSize().padding(8.dp).verticalScroll(rememberScrollState())) {
-        Card(Modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxSize().background(HtmlColors.Bg).padding(12.dp).verticalScroll(rememberScrollState())) {
+        Card(Modifier.fillMaxWidth(), shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = androidx.compose.foundation.BorderStroke(1.dp, HtmlColors.Border)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("🎯 狙い目", fontWeight = FontWeight.Bold)
 

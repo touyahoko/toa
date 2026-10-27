@@ -1,5 +1,15 @@
 package org.mhxxtools.mhxxrngtool.ui.combo
 
+import androidx.compose.foundation.background
+import androidx.compose.material3.CardDefaults
+
+import org.mhxxtools.mhxxrngtool.ui.common.SiteCard
+import org.mhxxtools.mhxxrngtool.ui.common.SitePage
+import org.mhxxtools.mhxxrngtool.ui.common.SitePrimaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteSecondaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteTitle
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -32,12 +42,12 @@ fun ComboScreen(
         uri?.let { vm.setVideoUri(it) }
     }
 
-    Column(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize().background(HtmlColors.Bg)) {
         LazyColumn(Modifier.weight(1f)) {
 
             // ── 🧪 調合スナイプ (フレーム検索) ──────────────────────────────
             item {
-                Card(Modifier.fillMaxWidth().padding(8.dp)) {
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = BorderStroke(1.dp, HtmlColors.Border)) {
                     Column(
                         Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -288,9 +298,9 @@ fun ComboScreen(
                         .clickable { onResultTap(r.frame) },
                     colors = CardDefaults.cardColors(
                         containerColor = if (isPrimary)
-                            MaterialTheme.colorScheme.primaryContainer
+                            HtmlColors.InfoBg
                         else
-                            MaterialTheme.colorScheme.surfaceVariant
+                            HtmlColors.Surface2
                     )
                 ) {
                     Column(Modifier.padding(10.dp)) {

@@ -1,5 +1,14 @@
 package org.mhxxtools.mhxxrngtool.ui.around
 
+import androidx.compose.material3.CardDefaults
+
+import org.mhxxtools.mhxxrngtool.ui.common.SiteCard
+import org.mhxxtools.mhxxrngtool.ui.common.SitePage
+import org.mhxxtools.mhxxrngtool.ui.common.SitePrimaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteSecondaryButton
+import org.mhxxtools.mhxxrngtool.ui.common.SiteTitle
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,8 +34,8 @@ fun AroundScreen(
 ) {
     val s by vm.state.collectAsStateWithLifecycle()
 
-    Column(modifier.fillMaxSize().padding(8.dp)) {
-        Card(Modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxSize().background(HtmlColors.Bg).padding(12.dp)) {
+        Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface), border = BorderStroke(1.dp, HtmlColors.Border)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -70,7 +79,7 @@ fun AroundScreen(
 private fun AroundCard(frame: Long, charm: org.mhxxtools.mhxxrngtool.rng.Charm, isCenter: Boolean) {
     val offset = frame  // offset label not needed here; frame IS the absolute frame
     val rarityColor = Color(charm.rarityColor)
-    val bgColor = if (isCenter) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+    val bgColor = if (isCenter) HtmlColors.InfoBg else HtmlColors.Surface2
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 0.dp, vertical = 2.dp),
