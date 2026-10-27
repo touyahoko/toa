@@ -11,7 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
 import org.opencv.core.Core
-import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
@@ -19,12 +18,10 @@ import kotlin.math.abs
 import kotlin.math.max
 
 /**
- * mhxx-renkin-reader の read_screen と同じ手順:
- *  max_channel → panel_offset(label) で平行移動 → ROI ごと tophat
- *  → matchTemplate(TM_CCOEFF_NORMED) + leftover 減点 + 上位2件の margin 判定
+ * 公式 mhxx-renkin-reader と同じテンプレート照合のみ（OCRなし）。
+ * assets/renkin/{skills,digits,slots,label} の見本で照合する。
  */
 object RenkinSwitchReader {
-
     private const val TAG = "RenkinSwitch"
 
     data class Result(val charm: OcrCharm, val note: String, val confidence: Float)
@@ -33,15 +30,14 @@ object RenkinSwitchReader {
     private const val SH = 720
     private const val TOPHAT_K = 25
 
-    // read.rs 定数
-    // 公式 read.rs と同じ座標 (1280x720)
+    // 公式 read.rs と同じ座標
     private val NAME1 = intArrayOf(655, 165, 800, 191)
-    private val PTS1  = intArrayOf(792, 162, 858, 194)
+    private val PTS1 = intArrayOf(795, 165, 850, 191)
     private val NAME2 = intArrayOf(655, 194, 800, 218)
-    private val PTS2  = intArrayOf(792, 191, 858, 223)
+    private val PTS2 = intArrayOf(795, 194, 850, 218)
     private const val NAME_LEFT = 667
-    private const val NAME_SEARCH = 6
-    private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247) // x0,y0,x1,y1
+    private const val NAME_SEARCH = 4
+    private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247)
     private const val LABEL_SEARCH = 30
     private const val LABEL_MIN = 0.50
     private val SLOT_X = intArrayOf(580, 604, 628)
@@ -49,12 +45,9 @@ object RenkinSwitchReader {
     private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
     private const val SLOT_SEARCH = 4
 
-    private const val SKILL_MIN = 0.35
-    private const val DIGIT_MIN = 0.22
-    private const val SLOT_MIN = 0.40
-    private const val SLOT_MIN_DIFF = 0.12
+    private const val SKILL_MIN = 0.30
+    private const val DIGIT_MIN = 0.35
     private const val LEFTOVER = 0.5
-    private const val RECHECK_MARGIN = 0.20
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -84,7 +77,9 @@ object RenkinSwitchReader {
             if (ref != null) {
                 try {
                     OpenCvBridge.alignWithReference(bitmap, ref, SW, SH) ?: scaleToScreen(bitmap)
-                } finally { ref.recycle() }
+                } finally {
+                    ref.recycle()
+                }
             } else scaleToScreen(bitmap)
         }
 
@@ -93,108 +88,41 @@ object RenkinSwitchReader {
             var mx = maxChannel(rgba)
             rgba.release()
 
-            // panel_offset: ラベルでずれを測り、見つかったら画像を戻す
             val (dx, dy, labScore) = panelOffset(mx)
             if (labScore >= LABEL_MIN) {
                 val shifted = translate(mx, dx, dy)
                 mx.release()
                 mx = shifted
                 Log.i(TAG, "panel_offset dx=$dx dy=$dy score=%.3f".format(labScore))
-            } else {
-                Log.i(TAG, "panel_offset skip score=%.3f".format(labScore))
             }
 
-            // ROI は tophat 済みで切る（tophat_region）
             val name1 = tophatRegion(mx, NAME1)
-            val pts1  = tophatRegion(mx, PTS1)
+            val pts1 = tophatRegion(mx, PTS1)
             val name2 = tophatRegion(mx, NAME2)
-            val pts2  = tophatRegion(mx, PTS2)
+            val pts2 = tophatRegion(mx, PTS2)
 
-            var (s1Id, s1Sc) = matchSkill(name1)
+            val (s1Id, s1Sc) = matchSkill(name1)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
-            var (s2Id, s2Sc) = if (skill2Empty) null to 1.0 else matchSkill(name2)
+            val (s2Id, s2Sc) = if (skill2Empty) null to 1.0 else matchSkill(name2)
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
-            val _slotPair = matchSlots(mx)
-            var slots = _slotPair.first
-            var slotNote = _slotPair.second
+            val (slots, slotNote) = matchSlots(mx)
 
             name1.release(); pts1.release(); name2.release(); pts2.release()
             mx.release()
 
-            // ── 錬金134以外も含む全 SKILL_NAMES を OCR で補強 ──
-            // テンプレ照合は公式134向け見本が強く、非公式スキルは誤マッチしやすいため
-            // スキル名ROIを ML Kit で読み、SkillMatcher で全205スキルに解決する
-            var ocrNote = ""
-            try {
-                val ocr1 = refineSkillByOcr(screenBmp, NAME1, s1Id, s1Sc)
-                if (ocr1 != null) {
-                    s1Id = ocr1.first
-                    s1Sc = ocr1.second
-                    ocrNote += " ocr1=${SKILL_NAMES.getOrElse(s1Id!!) { "?" }}"
-                }
-                if (!skill2Empty) {
-                    val ocr2 = refineSkillByOcr(screenBmp, NAME2, s2Id, s2Sc)
-                    if (ocr2 != null) {
-                        s2Id = ocr2.first
-                        s2Sc = ocr2.second
-                        ocrNote += " ocr2=${SKILL_NAMES.getOrElse(s2Id!!) { "?" }}"
-                    }
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "ocr refine failed", e)
-            }
-
-            // ポイント: テンプレ失敗時は ROI を OCR して +N / -N を拾う
-            // スロットOCR補強（○ — の表記）
-            if (slots <= 0 || slots > 3) {
-                val so = readSlotsByOcr(screenBmp)
-                if (so != null) {
-                    slots = so
-                    slotNote += " slotocr=$so"
-                }
-            } else {
-                // テンプレ0件でも OCR で再確認
-            }
-            run {
-                val so = readSlotsByOcr(screenBmp)
-                if (so != null) {
-                    // テンプレと食い違う・テンプレ0 のときは OCR 優先
-                    if (slots <= 0 || (so != slots && so in 0..3)) {
-                        // テンプレが全部ダッシュ判定で0になったケースを救済
-                        if (slots == 0 || slotNote.contains("c=0") || so > slots) {
-                            slots = so
-                            slotNote += " slotocr=$so"
-                        }
-                    }
-                }
-            }
-
-            var pts1v = p1
-            var pts2v = p2
-            if (pts1v == null || p1Sc < 0.35) {
-                val o = readPointsByOcr(screenBmp, PTS1)
-                if (o != null) { pts1v = o; ocrNote += " pts1ocr=$o" }
-            }
-            if (!skill2Empty && (pts2v == null || p2Sc < 0.35)) {
-                val o = readPointsByOcr(screenBmp, PTS2)
-                if (o != null) { pts2v = o; ocrNote += " pts2ocr=$o" }
-            }
-
             val skills = mutableListOf<OcrSkill>()
             if (s1Id != null && s1Sc >= SKILL_MIN) {
-                val pts = (pts1v ?: 0).coerceIn(0, 20)
-                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, pts)
+                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, (p1 ?: 0).coerceIn(0, 20))
             }
             if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                val pts = (pts2v ?: 0).coerceIn(0, 20)
-                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, pts)
+                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
             }
 
             if (skills.isEmpty()) {
                 return@withContext Result(
                     OcrCharm(-1, slots, emptyList()),
-                    "fail s1=%.2f s2=%.2f empty2=$skill2Empty lab=%.2f".format(s1Sc, s2Sc, labScore),
+                    "fail s1=%.2f s2=%.2f empty2=$skill2Empty lab=%.2f $slotNote".format(s1Sc, s2Sc, labScore),
                     0.1f
                 )
             }
@@ -204,18 +132,16 @@ object RenkinSwitchReader {
                 skills.size >= 1 && slots in 0..3 -> 0.90f
                 else -> 0.7f
             }
-            val note = "renkin " + skills.joinToString("+") { "${it.name}+${it.pts}" } +
+            val note = "tmpl " + skills.joinToString("+") { "${it.name}+${it.pts}" } +
                 " sl=$slots s1=%.2f".format(s1Sc) +
                 (if (skills.size > 1) " s2=%.2f".format(s2Sc) else " (no-s2)") +
-                " lab=%.2f $slotNote$ocrNote".format(labScore)
+                " p1=%.2f p2=%.2f lab=%.2f $slotNote".format(p1Sc, p2Sc, labScore)
             Log.i(TAG, note)
             Result(OcrCharm(-1, slots, skills), note, conf)
         } finally {
             if (screenBmp !== bitmap) screenBmp.recycle()
         }
     }
-
-    // ── load ──────────────────────────────────────────────────────────
 
     private fun loadBmp(context: Context, path: String): Bitmap? =
         runCatching { context.assets.open(path).use { BitmapFactory.decodeStream(it) } }.getOrNull()
@@ -259,131 +185,53 @@ object RenkinSwitchReader {
             circleMat = loadTh("renkin/slots/circle.png", 9)
             dashMat = loadTh("renkin/slots/dash.png", 9)
             loaded = true
-            Log.i(TAG, "loaded skills=${skillTmpls.size} digits=${digitTmpls.size} label=${labelMat != null}")
+            Log.i(TAG, "loaded skills=${skillTmpls.size} digits=${digitTmpls.size}")
         }
     }
-
-    // ── panel offset (label.png) ──────────────────────────────────────
 
     private fun panelOffset(mx: Mat): Triple<Int, Int, Double> {
         val label = labelMat ?: return Triple(0, 0, 0.0)
-        val x0 = LABEL_BLOCK[0]; val y0 = LABEL_BLOCK[1]
-        val x1 = LABEL_BLOCK[2]; val y1 = LABEL_BLOCK[3]
-        val r = LABEL_SEARCH
-        // 探索窓: LABEL_BLOCK ± SEARCH の tophat
-        val wl = (x0 - r).coerceAtLeast(0)
-        val wt = (y0 - r).coerceAtLeast(0)
-        val wr = (x1 + r).coerceAtMost(mx.cols())
-        val wb = (y1 + r).coerceAtMost(mx.rows())
-        val winRaw = Mat(mx, org.opencv.core.Rect(wl, wt, wr - wl, wb - wt)).clone()
-        val win = topHat(winRaw, TOPHAT_K)
-        winRaw.release()
-        if (label.cols() > win.cols() || label.rows() > win.rows()) {
-            win.release(); return Triple(0, 0, 0.0)
-        }
+        val s = LABEL_SEARCH
+        val l = (LABEL_BLOCK[0] - s).coerceAtLeast(0)
+        val t = (LABEL_BLOCK[1] - s).coerceAtLeast(0)
+        val r = (LABEL_BLOCK[2] + s).coerceAtMost(mx.cols())
+        val b = (LABEL_BLOCK[3] + s).coerceAtMost(mx.rows())
+        val win = Mat(mx, org.opencv.core.Rect(l, t, r - l, b - t)).clone()
         val result = Mat()
-        Imgproc.matchTemplate(win, label, result, Imgproc.TM_CCOEFF_NORMED)
-        val mm = Core.minMaxLoc(result)
-        result.release()
-        win.release()
-        // 窓内の max 位置 → 画像全体でのラベル左上
-        // 理想ラベル位置は (x0,y0)、検出は (wl+maxX, wt+maxY)
-        // translate 量 = 検出 - 理想（renkin: x as i64 - r）
-        val detX = wl + mm.maxLoc.x.toInt()
-        val detY = wt + mm.maxLoc.y.toInt()
-        val dx = detX - x0
-        val dy = detY - y0
-        // renkin translate は「ずれの分だけ画像を戻す」= -offset 方向
-        // panel_offset 戻り値は (x - r, y - r, v) where x,y are in the search window
-        // then translate(mx, panel.0, panel.1)
-        // match_template on win of size covering (x0-r..x1+r), max at (x,y) in win coords
-        // return (x - r, y - r, v)
-        val px = mm.maxLoc.x.toInt() - r
-        val py = mm.maxLoc.y.toInt() - r
-        return Triple(px, py, mm.maxVal)
+        return try {
+            if (label.cols() > win.cols() || label.rows() > win.rows()) {
+                Triple(0, 0, 0.0)
+            } else {
+                Imgproc.matchTemplate(win, label, result, Imgproc.TM_CCOEFF_NORMED)
+                val mm = Core.minMaxLoc(result)
+                val dx = (LABEL_BLOCK[0] - (l + mm.maxLoc.x.toInt()))
+                val dy = (LABEL_BLOCK[1] - (t + mm.maxLoc.y.toInt()))
+                Triple(dx, dy, mm.maxVal)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "panelOffset", e)
+            Triple(0, 0, 0.0)
+        } finally {
+            win.release(); result.release()
+        }
     }
 
     private fun translate(src: Mat, dx: Int, dy: Int): Mat {
-        if (dx == 0 && dy == 0) return src.clone()
-        val out = Mat.zeros(src.size(), src.type())
-        val M = Mat.zeros(2, 3, CvType.CV_64F)
-        M.put(0, 0, 1.0, 0.0, -dx.toDouble())
-        M.put(1, 0, 0.0, 1.0, -dy.toDouble())
-        // renkin translate(dx,dy): 画素を +dx,+dy 方向へ？ 
-        // "ずれの分だけ画像を戻す" → if label appeared at +dx from expected, shift image by -dx
-        // panel returns (x-r, y-r) which is the offset of detected vs expected origin of search
-        // Then translate(&mx, panel.0, panel.1) 
-        // Looking at translate implementation needed...
-        Imgproc.warpAffine(src, out, M, src.size(), Imgproc.INTER_NEAREST, Core.BORDER_CONSTANT, org.opencv.core.Scalar(0.0))
-        M.release()
+        val m = Mat.zeros(2, 3, org.opencv.core.CvType.CV_32F)
+        m.put(0, 0, 1.0, 0.0, -dx.toDouble(), 0.0, 1.0, -dy.toDouble())
+        val out = Mat()
+        Imgproc.warpAffine(src, out, m, Size(src.cols().toDouble(), src.rows().toDouble()))
+        m.release()
         return out
     }
-
-    // ── matching ─────────────────────────────────────────────────────
 
     private fun matchSkill(roiTh: Mat): Pair<Int?, Double> {
         data class Cand(val id: Int, val score: Double, val x: Int)
         val cands = mutableListOf<Cand>()
-        for (t in skillTmpls) {
-            // 見本がROIより大きい場合は高さいっぱいに縮小（サイトの 0.97〜1.03 に加え必要ならさらに）
-            val scales = doubleArrayOf(0.85, 0.90, 0.94, 0.97, 1.0, 1.03, 1.06)
-            for (sc in scales) {
-                var tw = (t.mat.cols() * sc).toInt().coerceAtLeast(1)
-                var th = (t.mat.rows() * sc).toInt().coerceAtLeast(1)
-                if (th > roiTh.rows() || tw > roiTh.cols()) {
-                    val fit = minOf(
-                        roiTh.rows().toDouble() / t.mat.rows(),
-                        roiTh.cols().toDouble() / t.mat.cols()
-                    ) * 0.98
-                    if (fit < 0.5) continue
-                    tw = (t.mat.cols() * fit).toInt().coerceAtLeast(1)
-                    th = (t.mat.rows() * fit).toInt().coerceAtLeast(1)
-                }
-                if (th > roiTh.rows() || tw > roiTh.cols()) continue
-                val scaled = Mat()
-                Imgproc.resize(t.mat, scaled, Size(tw.toDouble(), th.toDouble()))
-                val pair = matchNcc(roiTh, scaled)
-                if (pair == null) { scaled.release(); continue }
-                // 公式: 名前は左揃え。右に大きくずれて短い別名に吸われるのを防ぐ
-                val preferLeft = (NAME_LEFT - NAME1[0] - NAME_SEARCH)
-                val preferRight = (NAME_LEFT - NAME1[0] + NAME_SEARCH + 8)
-                val xOk = pair.second in preferLeft..preferRight || t.mat.cols() >= 60
-                if (!xOk && pair.first < 0.75) { scaled.release(); continue }
-                val adj = pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, scaled.cols())
-                cands += Cand(t.id, adj, pair.second)
-                // scaled は Cand に保持しないので解放（スコアだけ使う）
-                scaled.release()
-            }
-        }
-        if (cands.isEmpty()) return null to -1.0
-        cands.sortByDescending { it.score }
-        var best = cands[0]
-        var margin = if (cands.size > 1) best.score - cands[1].score else best.score + 1.0
-
-        // margin が極端に小さいときは 2 位を棄却しやすくする
-        if (cands.size > 1 && margin < 0.02 && best.score < 0.55) {
-            // ほぼ同点 → 信頼できない
-            return null to best.score
-        }
-        if (best.score < SKILL_MIN) return null to best.score
-        return best.id to best.score
-    }
-
-    private fun recheckScore(roi: Mat, tmpl: Mat, x: Int): Double {
-        // 簡易: マッチ位置での NCC をそのまま使う
-        if (x + tmpl.cols() > roi.cols()) return -1.0
-        val sub = Mat(roi, org.opencv.core.Rect(x, 0, minOf(tmpl.cols() + 2, roi.cols() - x), roi.rows())).clone()
-        val pair = matchNcc(sub, tmpl)
-        sub.release()
-        return pair?.first ?: -1.0
-    }
-
-    private fun matchDigit(roiTh: Mat): Pair<Int?, Double> {
-        if (roiTh.rows() < 4 || roiTh.cols() < 4) return null to -1.0
-        var bestN: Int? = null
-        var best = -1.0
-        for (tmpl in digitTmpls) {
-            for (sc in doubleArrayOf(0.80, 0.88, 0.94, 1.0, 1.06, 1.12)) {
+        val preferLeft = NAME_LEFT - NAME1[0] - NAME_SEARCH
+        val preferRight = NAME_LEFT - NAME1[0] + NAME_SEARCH
+        for (tmpl in skillTmpls) {
+            for (sc in doubleArrayOf(0.97, 1.0, 1.03)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
                 if (th > roiTh.rows() || tw > roiTh.cols()) {
@@ -391,7 +239,7 @@ object RenkinSwitchReader {
                         roiTh.rows().toDouble() / tmpl.mat.rows(),
                         roiTh.cols().toDouble() / tmpl.mat.cols()
                     ) * 0.98
-                    if (fit < 0.45) continue
+                    if (fit < 0.5) continue
                     tw = (tmpl.mat.cols() * fit).toInt().coerceAtLeast(1)
                     th = (tmpl.mat.rows() * fit).toInt().coerceAtLeast(1)
                 }
@@ -399,14 +247,62 @@ object RenkinSwitchReader {
                 val scaled = Mat()
                 Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
                 val pair = matchNcc(roiTh, scaled)
-                scaled.release()
-                if (pair != null && pair.first > best) {
-                    best = pair.first
-                    bestN = tmpl.id
+                if (pair != null) {
+                    // 左揃え付近のみ（公式 NAME_LEFT）
+                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 55) {
+                        val adj = pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, scaled.cols())
+                        cands += Cand(tmpl.id, adj, pair.second)
+                    }
                 }
+                scaled.release()
             }
         }
-        return if (best >= DIGIT_MIN) bestN to best else null to best
+        if (cands.isEmpty()) return null to -1.0
+        cands.sortByDescending { it.score }
+        val best = cands[0]
+        if (best.score < SKILL_MIN) return null to best.score
+        return best.id to best.score
+    }
+
+    private fun matchDigit(roiTh: Mat): Pair<Int?, Double> {
+        if (roiTh.rows() < 4 || roiTh.cols() < 4) return null to -1.0
+        data class DC(val id: Int, val score: Double)
+        val cands = mutableListOf<DC>()
+        for (tmpl in digitTmpls) {
+            var localBest = -1.0
+            for (sc in doubleArrayOf(0.97, 1.0, 1.03)) {
+                var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
+                var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
+                if (th > roiTh.rows() || tw > roiTh.cols()) {
+                    val fit = minOf(
+                        roiTh.rows().toDouble() / tmpl.mat.rows(),
+                        roiTh.cols().toDouble() / tmpl.mat.cols()
+                    ) * 0.98
+                    if (fit < 0.5) continue
+                    tw = (tmpl.mat.cols() * fit).toInt().coerceAtLeast(1)
+                    th = (tmpl.mat.rows() * fit).toInt().coerceAtLeast(1)
+                }
+                if (th > roiTh.rows() || tw > roiTh.cols()) continue
+                val scaled = Mat()
+                Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
+                val pair = matchNcc(roiTh, scaled)
+                val adj = if (pair == null) -1.0
+                else pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, scaled.cols())
+                scaled.release()
+                if (adj > localBest) localBest = adj
+            }
+            if (localBest >= DIGIT_MIN * 0.9) cands += DC(tmpl.id, localBest)
+        }
+        if (cands.isEmpty()) return null to -1.0
+        cands.sortByDescending { it.score }
+        var best = cands[0]
+        // 1桁と2桁が近いとき2桁を優先（余り減点済み）
+        val multi = cands.filter { it.id >= 10 }
+        if (best.id < 10 && multi.isNotEmpty()) {
+            val m = multi.maxBy { it.score }
+            if (m.score >= best.score - 0.08) best = m
+        }
+        return if (best.score >= DIGIT_MIN) best.id to best.score else null to best.score
     }
 
     private fun matchSlots(mx: Mat): Pair<Int, String> {
@@ -414,7 +310,7 @@ object RenkinSwitchReader {
         val dash = dashMat ?: return -1 to "no-tmpl"
         var count = 0
         val notes = mutableListOf<String>()
-        val s = SLOT_SEARCH + 2 // 写真ずれ余裕
+        val s = SLOT_SEARCH
         for (cx in SLOT_X) {
             val l = (cx + SLOT_CROP[0] - s).coerceAtLeast(0)
             val top = (SLOT_Y + SLOT_CROP[1] - s).coerceAtLeast(0)
@@ -428,19 +324,10 @@ object RenkinSwitchReader {
             raw.release()
             var bestC = -1.0
             var bestD = -1.0
-            for (sc in doubleArrayOf(0.85, 0.92, 1.0, 1.08, 1.15)) {
+            for (sc in doubleArrayOf(0.97, 1.0, 1.03)) {
                 fun tryM(tmpl: Mat): Double {
-                    var tw = (tmpl.cols() * sc).toInt().coerceAtLeast(1)
-                    var th = (tmpl.rows() * sc).toInt().coerceAtLeast(1)
-                    if (tw > roi.cols() || th > roi.rows()) {
-                        val fit = minOf(
-                            roi.cols().toDouble() / tmpl.cols(),
-                            roi.rows().toDouble() / tmpl.rows()
-                        ) * 0.98
-                        if (fit < 0.5) return -1.0
-                        tw = (tmpl.cols() * fit).toInt().coerceAtLeast(1)
-                        th = (tmpl.rows() * fit).toInt().coerceAtLeast(1)
-                    }
+                    val tw = (tmpl.cols() * sc).toInt().coerceAtLeast(1)
+                    val th = (tmpl.rows() * sc).toInt().coerceAtLeast(1)
                     if (tw > roi.cols() || th > roi.rows()) return -1.0
                     val scMat = Mat()
                     Imgproc.resize(tmpl, scMat, Size(tw.toDouble(), th.toDouble()))
@@ -453,7 +340,7 @@ object RenkinSwitchReader {
             }
             roi.release()
             notes += "c=%.2f/d=%.2f".format(bestC, bestD)
-            // 公式: 丸スコア > 線スコア なら ○ として数える（閾値なし）
+            // 公式: 丸スコア > 線スコア なら ○
             if (bestC > bestD) count++
         }
         return count.coerceIn(0, 3) to notes.joinToString(",")
@@ -490,110 +377,7 @@ object RenkinSwitchReader {
         return if (total == 0) 0.0 else outside.toDouble() / total
     }
 
-    /**
-     * 公式 is_dashes: 強い横線が狭い帯に集中していれば「-----」。
-     * 短いスキル名の一画を横線と誤認しないよう、帯内インク比率も見る。
-     */
-        /**
-     * 公式 is_dashes: 強い横線が狭い帯に集中していれば「-----」。
-     */
-
-
-    /** ポイント欄 OCR: "+12" / "＋4" / "12" などから数値を抽出 */
-
-    /**
-     * スロット行を OCR: 「○○—」「○——」「———」「○○○」などから 0〜3 を返す。
-     * 画面上のスロット記号エリア (SLOT_X 付近) を切る。
-     */
-    private suspend fun readSlotsByOcr(screen: android.graphics.Bitmap): Int? {
-        val left = (SLOT_X.first() - 8).coerceAtLeast(0)
-        val right = (SLOT_X.last() + 24).coerceAtMost(SW)
-        val top = (SLOT_Y - 6).coerceAtLeast(0)
-        val bottom = (SLOT_Y + 24).coerceAtMost(SH)
-        val l = left.toFloat() / SW
-        val t0 = top.toFloat() / SH
-        val r = right.toFloat() / SW
-        val b = bottom.toFloat() / SH
-        val text = AndroidOcr.recognizeCropped(screen, l, t0, r, b).getOrNull().orEmpty()
-        if (text.isBlank()) return null
-        // ○ ● 〇 O o 0 を丸、— - − ー を線とみなす
-        var circles = 0
-        var dashes = 0
-        for (ch in text) {
-            when (ch) {
-                '○', '●', '〇', 'O', 'o', '◯', '◎' -> circles++
-                '—', '－', '-', '−', 'ー', '─', '_' -> dashes++
-            }
-        }
-        // 「スロ」「口」などの誤読で数字が出る場合
-        val digit = Regex("""[スロslotSLOT]*\s*([0-3])""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-        val result = when {
-            circles in 1..3 -> circles.coerceAtMost(3)
-            circles == 0 && dashes >= 2 -> 0
-            digit != null -> digit
-            else -> null
-        }
-        android.util.Log.i(TAG, "slot OCR '$text' c=$circles d=$dashes -> $result")
-        return result
-    }
-
-    private suspend fun readPointsByOcr(screen: android.graphics.Bitmap, rect: IntArray): Int? {
-        val l = rect[0].toFloat() / SW
-        val t0 = rect[1].toFloat() / SH
-        val r = rect[2].toFloat() / SW
-        val b = rect[3].toFloat() / SH
-        val text = AndroidOcr.recognizeCropped(screen, l, t0, r, b).getOrNull().orEmpty()
-        if (text.isBlank()) return null
-        val norm = text
-            .replace('＋', '+')
-            .replace('−', '-')
-            .replace('ー', '-')
-            .replace(" ", "")
-            .replace("\n", "")
-        val m = Regex("""([+-]?)(\d{1,2})""").find(norm)
-        if (m != null) {
-            val sign = if (m.groupValues[1] == "-") -1 else 1
-            val n = m.groupValues[2].toIntOrNull() ?: return null
-            val v = kotlin.math.abs(sign * n).coerceIn(0, 20)
-            if (v == 0) return null
-            android.util.Log.i(TAG, "pts OCR '$text' -> $v")
-            return v
-        }
-        val d = Regex("""(\d{1,2})""").find(norm)?.groupValues?.get(1)?.toIntOrNull()
-        if (d != null && d in 1..20) {
-            android.util.Log.i(TAG, "pts OCR digits '$text' -> $d")
-            return d
-        }
-        android.util.Log.i(TAG, "pts OCR miss '$text'")
-        return null
-    }
-
-    private suspend fun refineSkillByOcr(
-        screen: android.graphics.Bitmap,
-        rect: IntArray,
-        tmplId: Int?,
-        tmplScore: Double
-    ): Pair<Int, Double>? {
-        val l = rect[0].toFloat() / SW
-        val t0 = rect[1].toFloat() / SH
-        val r = rect[2].toFloat() / SW
-        val b = rect[3].toFloat() / SH
-        val text = AndroidOcr.recognizeCropped(screen, l, t0, r, b).getOrNull()
-            ?.trim().orEmpty()
-        if (text.isBlank()) return null
-        val idx = SkillMatcher.findSkillGlobalIdx(text)
-        if (idx < 0) {
-            android.util.Log.i(TAG, "ocr skill miss text='$text' tmpl=$tmplId sc=$tmplScore")
-            return null
-        }
-        if (tmplId != null && tmplId == idx && tmplScore >= 0.50) return null
-        val preferOcr = tmplId == null || tmplScore < 0.55 || tmplId != idx
-        if (!preferOcr) return null
-        val sc = if (tmplId == idx) maxOf(tmplScore, 0.60) else 0.62
-        android.util.Log.i(TAG, "ocr refine '$text' -> ${SKILL_NAMES.getOrElse(idx){ "?" }}($idx) was=$tmplId/$tmplScore")
-        return idx to sc
-    }
-
+    /** 公式 is_dashes */
     private fun isDashes(roi: Mat): Boolean {
         val cols = roi.cols(); val rows = roi.rows()
         if (cols < 4 || rows < 4) return true
@@ -620,7 +404,6 @@ object RenkinSwitchReader {
     }
 
     private fun tophatRegion(mx: Mat, rect: IntArray): Mat {
-        // 余白付きで crop → tophat → 中央を切り出し（renkin tophat_region）
         val m = TOPHAT_K - 1
         val l = (rect[0] - m).coerceAtLeast(0)
         val t = (rect[1] - m).coerceAtLeast(0)
