@@ -47,7 +47,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.30
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.25
+    private const val LEFTOVER = 1.40
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -264,15 +264,20 @@ object RenkinSwitchReader {
         // id ごとに最良スコアを残す
         val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
         val ranked = bestById.sortedByDescending { it.score }
+        // 上位から「幅が広くスコアが十分な」候補を優先
+        // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
         var best = ranked[0]
-        // 僅差なら「余りが少なく幅が広い」見本を優先（追加スキルも同じルール）
         if (ranked.size > 1) {
-            val top = ranked.take(8)
-            val margin = top[0].score - top[1].score
-            if (margin < 0.12) {
-                best = top.maxBy { c ->
-                    c.score * 1000.0 + c.width
-                }
+            val top = ranked.take(12)
+            best = top.maxBy { c ->
+                // スコアを主、同程度なら幅（長いスキル名）を優先
+                c.score * 100.0 + c.width * 0.02
+            }
+            // 1位が短い見本で2位が十分近い＆幅が広いなら2位を採用
+            val a = top[0]
+            val longer = top.filter { it.width >= a.width + 8 && it.score >= a.score - 0.15 }
+            if (longer.isNotEmpty() && a.width < 70) {
+                best = longer.maxBy { it.score * 100.0 + it.width * 0.02 }
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
@@ -439,8 +444,16 @@ object RenkinSwitchReader {
 
     private fun scaleToScreen(src: Bitmap): Bitmap {
         if (src.width == SW && src.height == SH) return src
+        // 引き伸ばさずレターボックス（アスペクト維持）— ROIずれの主因を防ぐ
         val out = Bitmap.createBitmap(SW, SH, Bitmap.Config.ARGB_8888)
-        Canvas(out).drawBitmap(src, null, Rect(0, 0, SW, SH), Paint(Paint.FILTER_BITMAP_FLAG))
+        val canvas = Canvas(out)
+        canvas.drawColor(android.graphics.Color.BLACK)
+        val scale = minOf(SW.toFloat() / src.width, SH.toFloat() / src.height)
+        val nw = (src.width * scale).toInt().coerceAtLeast(1)
+        val nh = (src.height * scale).toInt().coerceAtLeast(1)
+        val dx = (SW - nw) / 2
+        val dy = (SH - nh) / 2
+        canvas.drawBitmap(src, null, Rect(dx, dy, dx + nw, dy + nh), Paint(Paint.FILTER_BITMAP_FLAG))
         return out
     }
 
