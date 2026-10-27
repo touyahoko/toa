@@ -203,7 +203,7 @@ fun MainScreen(appState: AppStateViewModel) {
 @Composable
 private fun HtmlChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val bg = if (selected) HtmlColors.Accent else HtmlColors.Surface2
-    val fg = if (selected) Color.White else HtmlColors.Text
+    val fg = if (selected) HtmlColors.OnAccent else HtmlColors.Text
     Box(
         Modifier
             .clip(RoundedCornerShape(16.dp))

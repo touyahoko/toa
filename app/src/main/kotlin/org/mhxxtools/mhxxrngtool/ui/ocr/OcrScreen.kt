@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -124,7 +125,7 @@ fun OcrScreen(
                                     .fillMaxWidth()
                                     .height(180.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1A1A1A))
+                                    .background(HtmlColors.Surface2)
                             )
                         }
                     }
@@ -145,7 +146,7 @@ fun OcrScreen(
                             s.ocrStatus,
                             fontSize = 12.sp,
                             color    = if (s.hasError) MaterialTheme.colorScheme.error
-                                       else Color(0xFF4CAF50)
+                                       else HtmlColors.Success
                         )
                     }
 
