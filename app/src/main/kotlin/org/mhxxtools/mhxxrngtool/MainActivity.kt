@@ -7,7 +7,6 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
 import org.mhxxtools.mhxxrngtool.ocr.OpenCvBridge
@@ -15,7 +14,6 @@ import org.mhxxtools.mhxxrngtool.ui.MainScreen
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.theme.MhxxRngTheme
 
-/** FragmentActivity: AUSBC (CameraFragment) 埋め込みに必要 */
 class MainActivity : FragmentActivity() {
 
     private val appState: AppStateViewModel by viewModels()
@@ -24,11 +22,11 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         OpenCvBridge.init()
         enableEdgeToEdge()
-        // ライトテーマ: ステータスバーは暗いアイコン
-        WindowCompat.getInsetsController(window, window.decorView)
-            .isAppearanceLightStatusBars = true
-        WindowCompat.getInsetsController(window, window.decorView)
-            .isAppearanceLightNavigationBars = true
+        // ダークテーマ: ステータスバーは明るいアイコン
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         setContent {
             MhxxRngTheme {
                 Surface(
