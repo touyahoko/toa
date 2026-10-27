@@ -47,7 +47,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.30
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 0.5
+    private const val LEFTOVER = 0.85
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -259,7 +259,21 @@ object RenkinSwitchReader {
         }
         if (cands.isEmpty()) return null to -1.0
         cands.sortByDescending { it.score }
-        val best = cands[0]
+        var best = cands[0]
+        // 上位が僅差のとき、より長い見本（インクを広く覆う）を優先
+        // 例: 強撃瓶追加 vs 重撃弾強化 — 余りインクが多い短い誤マッチを落とす
+        if (cands.size > 1) {
+            val top = cands.take(5)
+            val margin = top[0].score - top.getOrNull(1)?.score!!
+            if (margin < 0.08) {
+                // スコアが近い候補から、テンプレ幅が広いものを選ぶ（長いスキル名）
+                val byWidth = top.maxBy { c ->
+                    val w = skillTmpls.firstOrNull { it.id == c.id }?.mat?.cols() ?: 0
+                    c.score * 1000 + w
+                }
+                best = byWidth
+            }
+        }
         if (best.score < SKILL_MIN) return null to best.score
         return best.id to best.score
     }
