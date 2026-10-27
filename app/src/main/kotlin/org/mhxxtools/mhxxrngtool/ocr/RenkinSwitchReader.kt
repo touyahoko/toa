@@ -36,9 +36,9 @@ object RenkinSwitchReader {
     // read.rs 定数
     // 公式 read.rs と同じ座標 (1280x720)
     private val NAME1 = intArrayOf(655, 165, 800, 191)
-    private val PTS1  = intArrayOf(795, 165, 850, 191)
+    private val PTS1  = intArrayOf(792, 162, 858, 194)
     private val NAME2 = intArrayOf(655, 194, 800, 218)
-    private val PTS2  = intArrayOf(795, 194, 850, 218)
+    private val PTS2  = intArrayOf(792, 191, 858, 223)
     private const val NAME_LEFT = 667
     private const val NAME_SEARCH = 6
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247) // x0,y0,x1,y1
@@ -50,9 +50,9 @@ object RenkinSwitchReader {
     private const val SLOT_SEARCH = 4
 
     private const val SKILL_MIN = 0.35
-    private const val DIGIT_MIN = 0.30
-    private const val SLOT_MIN = 0.50
-    private const val SLOT_MIN_DIFF = 0.20
+    private const val DIGIT_MIN = 0.22
+    private const val SLOT_MIN = 0.40
+    private const val SLOT_MIN_DIFF = 0.12
     private const val LEFTOVER = 0.5
     private const val RECHECK_MARGIN = 0.20
 
@@ -143,13 +143,25 @@ object RenkinSwitchReader {
                 Log.w(TAG, "ocr refine failed", e)
             }
 
+            // ポイント: テンプレ失敗時は ROI を OCR して +N / -N を拾う
+            var pts1v = p1
+            var pts2v = p2
+            if (pts1v == null || p1Sc < 0.35) {
+                val o = readPointsByOcr(screenBmp, PTS1)
+                if (o != null) { pts1v = o; ocrNote += " pts1ocr=$o" }
+            }
+            if (!skill2Empty && (pts2v == null || p2Sc < 0.35)) {
+                val o = readPointsByOcr(screenBmp, PTS2)
+                if (o != null) { pts2v = o; ocrNote += " pts2ocr=$o" }
+            }
+
             val skills = mutableListOf<OcrSkill>()
             if (s1Id != null && s1Sc >= SKILL_MIN) {
-                val pts = (p1 ?: 0).coerceIn(0, 20)
+                val pts = (pts1v ?: 0).coerceIn(0, 20)
                 skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, pts)
             }
             if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                val pts = (p2 ?: 0).coerceIn(0, 20)
+                val pts = (pts2v ?: 0).coerceIn(0, 20)
                 skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, pts)
             }
 
@@ -341,20 +353,30 @@ object RenkinSwitchReader {
     }
 
     private fun matchDigit(roiTh: Mat): Pair<Int?, Double> {
+        if (roiTh.rows() < 4 || roiTh.cols() < 4) return null to -1.0
         var bestN: Int? = null
         var best = -1.0
-        for (t in digitTmpls) {
-            for (sc in doubleArrayOf(0.9, 1.0, 1.15, 1.3)) {
-                val scaled = Mat()
-                Imgproc.resize(t.mat, scaled, Size(t.mat.cols() * sc, t.mat.rows() * sc))
-                if (scaled.cols() > roiTh.cols() || scaled.rows() > roiTh.rows()) {
-                    scaled.release(); continue
+        for (tmpl in digitTmpls) {
+            for (sc in doubleArrayOf(0.80, 0.88, 0.94, 1.0, 1.06, 1.12)) {
+                var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
+                var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
+                if (th > roiTh.rows() || tw > roiTh.cols()) {
+                    val fit = minOf(
+                        roiTh.rows().toDouble() / tmpl.mat.rows(),
+                        roiTh.cols().toDouble() / tmpl.mat.cols()
+                    ) * 0.98
+                    if (fit < 0.45) continue
+                    tw = (tmpl.mat.cols() * fit).toInt().coerceAtLeast(1)
+                    th = (tmpl.mat.rows() * fit).toInt().coerceAtLeast(1)
                 }
+                if (th > roiTh.rows() || tw > roiTh.cols()) continue
+                val scaled = Mat()
+                Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
                 val pair = matchNcc(roiTh, scaled)
                 scaled.release()
                 if (pair != null && pair.first > best) {
                     best = pair.first
-                    bestN = t.id
+                    bestN = tmpl.id
                 }
             }
         }
@@ -436,6 +458,39 @@ object RenkinSwitchReader {
         /**
      * 公式 is_dashes: 強い横線が狭い帯に集中していれば「-----」。
      */
+
+
+    /** ポイント欄 OCR: "+12" / "＋4" / "12" などから数値を抽出 */
+    private suspend fun readPointsByOcr(screen: android.graphics.Bitmap, rect: IntArray): Int? {
+        val l = rect[0].toFloat() / SW
+        val t0 = rect[1].toFloat() / SH
+        val r = rect[2].toFloat() / SW
+        val b = rect[3].toFloat() / SH
+        val text = AndroidOcr.recognizeCropped(screen, l, t0, r, b).getOrNull().orEmpty()
+        if (text.isBlank()) return null
+        val norm = text
+            .replace('＋', '+')
+            .replace('−', '-')
+            .replace('ー', '-')
+            .replace(" ", "")
+            .replace("\n", "")
+        val m = Regex("""([+-]?)(\d{1,2})""").find(norm)
+        if (m != null) {
+            val sign = if (m.groupValues[1] == "-") -1 else 1
+            val n = m.groupValues[2].toIntOrNull() ?: return null
+            val v = kotlin.math.abs(sign * n).coerceIn(0, 20)
+            if (v == 0) return null
+            android.util.Log.i(TAG, "pts OCR '$text' -> $v")
+            return v
+        }
+        val d = Regex("""(\d{1,2})""").find(norm)?.groupValues?.get(1)?.toIntOrNull()
+        if (d != null && d in 1..20) {
+            android.util.Log.i(TAG, "pts OCR digits '$text' -> $d")
+            return d
+        }
+        android.util.Log.i(TAG, "pts OCR miss '$text'")
+        return null
+    }
 
     private suspend fun refineSkillByOcr(
         screen: android.graphics.Bitmap,
