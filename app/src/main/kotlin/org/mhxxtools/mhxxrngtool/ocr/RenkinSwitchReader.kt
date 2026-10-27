@@ -47,7 +47,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.30
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 0.85
+    private const val LEFTOVER = 1.05
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -226,12 +226,13 @@ object RenkinSwitchReader {
     }
 
     private fun matchSkill(roiTh: Mat): Pair<Int?, Double> {
-        data class Cand(val id: Int, val score: Double, val x: Int)
+        // 錬金リーダーと同じ: NCC + 余りインク減点。公式・追加スキルを同一条件で照合。
+        data class Cand(val id: Int, val score: Double, val x: Int, val width: Int)
         val cands = mutableListOf<Cand>()
         val preferLeft = NAME_LEFT - NAME1[0] - NAME_SEARCH
         val preferRight = NAME_LEFT - NAME1[0] + NAME_SEARCH
         for (tmpl in skillTmpls) {
-            for (sc in doubleArrayOf(0.97, 1.0, 1.03)) {
+            for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
                 if (th > roiTh.rows() || tw > roiTh.cols()) {
@@ -248,30 +249,30 @@ object RenkinSwitchReader {
                 Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
                 val pair = matchNcc(roiTh, scaled)
                 if (pair != null) {
-                    // 左揃え付近のみ（公式 NAME_LEFT）
-                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 55) {
-                        val adj = pair.first - LEFTOVER * leftoverRatio(roiTh, pair.second, scaled.cols())
-                        cands += Cand(tmpl.id, adj, pair.second)
+                    // 左揃え付近、または幅のある見本（追加スキル含む）
+                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 40) {
+                        val left = leftoverRatio(roiTh, pair.second, scaled.cols())
+                        // 公式相当: NCC - leftover*係数。余りが多い短い誤マッチを落とす
+                        val adj = pair.first - LEFTOVER * left
+                        cands += Cand(tmpl.id, adj, pair.second, scaled.cols())
                     }
                 }
                 scaled.release()
             }
         }
         if (cands.isEmpty()) return null to -1.0
-        cands.sortByDescending { it.score }
-        var best = cands[0]
-        // 上位が僅差のとき、より長い見本（インクを広く覆う）を優先
-        // 例: 強撃瓶追加 vs 重撃弾強化 — 余りインクが多い短い誤マッチを落とす
-        if (cands.size > 1) {
-            val top = cands.take(5)
-            val margin = top[0].score - top.getOrNull(1)?.score!!
-            if (margin < 0.08) {
-                // スコアが近い候補から、テンプレ幅が広いものを選ぶ（長いスキル名）
-                val byWidth = top.maxBy { c ->
-                    val w = skillTmpls.firstOrNull { it.id == c.id }?.mat?.cols() ?: 0
-                    c.score * 1000 + w
+        // id ごとに最良スコアを残す
+        val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
+        val ranked = bestById.sortedByDescending { it.score }
+        var best = ranked[0]
+        // 僅差なら「余りが少なく幅が広い」見本を優先（追加スキルも同じルール）
+        if (ranked.size > 1) {
+            val top = ranked.take(8)
+            val margin = top[0].score - top[1].score
+            if (margin < 0.12) {
+                best = top.maxBy { c ->
+                    c.score * 1000.0 + c.width
                 }
-                best = byWidth
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
