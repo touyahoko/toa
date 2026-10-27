@@ -47,7 +47,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.30
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.05
+    private const val LEFTOVER = 1.25
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
