@@ -115,7 +115,9 @@ object RenkinSwitchReader {
             val skill2Empty = isDashes(name2)
             var (s2Id, s2Sc) = if (skill2Empty) null to 1.0 else matchSkill(name2)
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
-            val (slots, slotNote) = matchSlots(mx)
+            val _slotPair = matchSlots(mx)
+            var slots = _slotPair.first
+            var slotNote = _slotPair.second
 
             name1.release(); pts1.release(); name2.release(); pts2.release()
             mx.release()
@@ -144,6 +146,30 @@ object RenkinSwitchReader {
             }
 
             // ポイント: テンプレ失敗時は ROI を OCR して +N / -N を拾う
+            // スロットOCR補強（○ — の表記）
+            if (slots <= 0 || slots > 3) {
+                val so = readSlotsByOcr(screenBmp)
+                if (so != null) {
+                    slots = so
+                    slotNote += " slotocr=$so"
+                }
+            } else {
+                // テンプレ0件でも OCR で再確認
+            }
+            run {
+                val so = readSlotsByOcr(screenBmp)
+                if (so != null) {
+                    // テンプレと食い違う・テンプレ0 のときは OCR 優先
+                    if (slots <= 0 || (so != slots && so in 0..3)) {
+                        // テンプレが全部ダッシュ判定で0になったケースを救済
+                        if (slots == 0 || slotNote.contains("c=0") || so > slots) {
+                            slots = so
+                            slotNote += " slotocr=$so"
+                        }
+                    }
+                }
+            }
+
             var pts1v = p1
             var pts2v = p2
             if (pts1v == null || p1Sc < 0.35) {
@@ -388,24 +414,36 @@ object RenkinSwitchReader {
         val dash = dashMat ?: return -1 to "no-tmpl"
         var count = 0
         val notes = mutableListOf<String>()
-        val s = SLOT_SEARCH
+        val s = SLOT_SEARCH + 2 // 写真ずれ余裕
         for (cx in SLOT_X) {
             val l = (cx + SLOT_CROP[0] - s).coerceAtLeast(0)
-            val t = (SLOT_Y + SLOT_CROP[1] - s).coerceAtLeast(0)
+            val top = (SLOT_Y + SLOT_CROP[1] - s).coerceAtLeast(0)
             val r = (cx + SLOT_CROP[2] + s).coerceAtMost(mx.cols())
-            val b = (SLOT_Y + SLOT_CROP[3] + s).coerceAtMost(mx.rows())
-            val raw = Mat(mx, org.opencv.core.Rect(l, t, r - l, b - t)).clone()
+            val bottom = (SLOT_Y + SLOT_CROP[3] + s).coerceAtMost(mx.rows())
+            if (r - l < 4 || bottom - top < 4) {
+                notes += "skip"; continue
+            }
+            val raw = Mat(mx, org.opencv.core.Rect(l, top, r - l, bottom - top)).clone()
             val roi = topHat(raw, 9)
             raw.release()
             var bestC = -1.0
             var bestD = -1.0
-            for (sc in doubleArrayOf(0.9, 1.0, 1.1)) {
+            for (sc in doubleArrayOf(0.85, 0.92, 1.0, 1.08, 1.15)) {
                 fun tryM(tmpl: Mat): Double {
-                    val scMat = Mat()
-                    Imgproc.resize(tmpl, scMat, Size(tmpl.cols() * sc, tmpl.rows() * sc))
-                    if (scMat.cols() > roi.cols() || scMat.rows() > roi.rows()) {
-                        scMat.release(); return -1.0
+                    var tw = (tmpl.cols() * sc).toInt().coerceAtLeast(1)
+                    var th = (tmpl.rows() * sc).toInt().coerceAtLeast(1)
+                    if (tw > roi.cols() || th > roi.rows()) {
+                        val fit = minOf(
+                            roi.cols().toDouble() / tmpl.cols(),
+                            roi.rows().toDouble() / tmpl.rows()
+                        ) * 0.98
+                        if (fit < 0.5) return -1.0
+                        tw = (tmpl.cols() * fit).toInt().coerceAtLeast(1)
+                        th = (tmpl.rows() * fit).toInt().coerceAtLeast(1)
                     }
+                    if (tw > roi.cols() || th > roi.rows()) return -1.0
+                    val scMat = Mat()
+                    Imgproc.resize(tmpl, scMat, Size(tw.toDouble(), th.toDouble()))
                     val p = matchNcc(roi, scMat)
                     scMat.release()
                     return p?.first ?: -1.0
@@ -415,7 +453,8 @@ object RenkinSwitchReader {
             }
             roi.release()
             notes += "c=%.2f/d=%.2f".format(bestC, bestD)
-            if (bestC >= SLOT_MIN && bestC - bestD >= SLOT_MIN_DIFF) count++
+            // 公式: 丸スコア > 線スコア なら ○ として数える（閾値なし）
+            if (bestC > bestD) count++
         }
         return count.coerceIn(0, 3) to notes.joinToString(",")
     }
@@ -461,6 +500,43 @@ object RenkinSwitchReader {
 
 
     /** ポイント欄 OCR: "+12" / "＋4" / "12" などから数値を抽出 */
+
+    /**
+     * スロット行を OCR: 「○○—」「○——」「———」「○○○」などから 0〜3 を返す。
+     * 画面上のスロット記号エリア (SLOT_X 付近) を切る。
+     */
+    private suspend fun readSlotsByOcr(screen: android.graphics.Bitmap): Int? {
+        val left = (SLOT_X.first() - 8).coerceAtLeast(0)
+        val right = (SLOT_X.last() + 24).coerceAtMost(SW)
+        val top = (SLOT_Y - 6).coerceAtLeast(0)
+        val bottom = (SLOT_Y + 24).coerceAtMost(SH)
+        val l = left.toFloat() / SW
+        val t0 = top.toFloat() / SH
+        val r = right.toFloat() / SW
+        val b = bottom.toFloat() / SH
+        val text = AndroidOcr.recognizeCropped(screen, l, t0, r, b).getOrNull().orEmpty()
+        if (text.isBlank()) return null
+        // ○ ● 〇 O o 0 を丸、— - − ー を線とみなす
+        var circles = 0
+        var dashes = 0
+        for (ch in text) {
+            when (ch) {
+                '○', '●', '〇', 'O', 'o', '◯', '◎' -> circles++
+                '—', '－', '-', '−', 'ー', '─', '_' -> dashes++
+            }
+        }
+        // 「スロ」「口」などの誤読で数字が出る場合
+        val digit = Regex("""[スロslotSLOT]*\s*([0-3])""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val result = when {
+            circles in 1..3 -> circles.coerceAtMost(3)
+            circles == 0 && dashes >= 2 -> 0
+            digit != null -> digit
+            else -> null
+        }
+        android.util.Log.i(TAG, "slot OCR '$text' c=$circles d=$dashes -> $result")
+        return result
+    }
+
     private suspend fun readPointsByOcr(screen: android.graphics.Bitmap, rect: IntArray): Int? {
         val l = rect[0].toFloat() / SW
         val t0 = rect[1].toFloat() / SH
