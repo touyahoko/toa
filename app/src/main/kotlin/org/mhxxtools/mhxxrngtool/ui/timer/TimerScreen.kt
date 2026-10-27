@@ -1,4 +1,6 @@
 package org.mhxxtools.mhxxrngtool.ui.timer
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Color
 
 import androidx.compose.foundation.background

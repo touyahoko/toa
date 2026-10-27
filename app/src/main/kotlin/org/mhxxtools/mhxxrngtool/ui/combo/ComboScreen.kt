@@ -1,4 +1,6 @@
 package org.mhxxtools.mhxxrngtool.ui.combo
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.BorderStroke
 
 import androidx.compose.foundation.background
 import androidx.compose.material3.CardDefaults

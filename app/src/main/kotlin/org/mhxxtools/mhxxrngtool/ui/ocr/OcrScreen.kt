@@ -199,8 +199,9 @@ fun OcrScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         val previewBmp = remember(s.selectedImageUri) {
-                            s.selectedImageUri?.let { uri ->
+                            s.selectedImageUri?.let { uriStr ->
                                 runCatching {
+                                    val uri = Uri.parse(uriStr)
                                     context.contentResolver.openInputStream(uri)?.use {
                                         BitmapFactory.decodeStream(it)
                                     }
