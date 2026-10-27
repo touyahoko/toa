@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.MhxxRngTool" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.MhxxRngTool" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#090C13</item>
+        <item name="android:navigationBarColor">#090C13</item>
+        <item name="android:windowBackground">#090C13</item>
+        <item name="android:colorBackground">#090C13</item>
+    </style>
 </resources>

@@ -1,13 +1,15 @@
 package org.mhxxtools.mhxxrngtool
 
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import androidx.core.view.WindowCompat
+import androidx.compose.ui.graphics.toArgb
 import androidx.fragment.app.FragmentActivity
 import org.mhxxtools.mhxxrngtool.ocr.OpenCvBridge
 import org.mhxxtools.mhxxrngtool.ui.MainScreen
@@ -21,12 +23,13 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         OpenCvBridge.init()
-        enableEdgeToEdge()
-        // ダークテーマ: ステータスバーは明るいアイコン
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
-        }
+        val bar = HtmlColors.Bg.toArgb()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(bar),
+            navigationBarStyle = SystemBarStyle.dark(bar)
+        )
+        window.navigationBarColor = bar
+        window.statusBarColor = bar
         setContent {
             MhxxRngTheme {
                 Surface(
