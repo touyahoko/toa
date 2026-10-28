@@ -38,16 +38,16 @@ object RenkinSwitchReader {
     private const val NAME_LEFT = 667
     private const val NAME_SEARCH = 4
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247)
-    private const val LABEL_SEARCH = 30
+    private const val LABEL_SEARCH = 48
     private const val LABEL_MIN = 0.50
     private val SLOT_X = intArrayOf(580, 604, 628)
     private const val SLOT_Y = 224
     private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
     private const val SLOT_SEARCH = 4
 
-    private const val SKILL_MIN = 0.30
+    private const val SKILL_MIN = 0.28
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.40
+    private const val LEFTOVER = 0.85
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -72,15 +72,21 @@ object RenkinSwitchReader {
             return@withContext Result(OcrCharm(-1, -1, emptyList()), "skills空", 0f)
         }
 
-        val screenBmp = if (isSwitchCapture(bitmap)) scaleToScreen(bitmap) else {
+        // 公式同様: まず reference 位置合わせ。失敗時は画面いっぱいに引き伸ばし
+        // （レターボックスだと ROI が外れて未認識・誤認識になる）
+        val screenBmp = run {
             val ref = loadBmp(context, "renkin/reference.png")
             if (ref != null) {
                 try {
-                    OpenCvBridge.alignWithReference(bitmap, ref, SW, SH) ?: scaleToScreen(bitmap)
+                    OpenCvBridge.alignWithReference(bitmap, ref, SW, SH)
+                        ?: OpenCvBridge.alignToCanonical(bitmap, SW, SH)
+                        ?: scaleToScreen(bitmap)
                 } finally {
                     ref.recycle()
                 }
-            } else scaleToScreen(bitmap)
+            } else {
+                OpenCvBridge.alignToCanonical(bitmap, SW, SH) ?: scaleToScreen(bitmap)
+            }
         }
 
         try {
@@ -444,16 +450,9 @@ object RenkinSwitchReader {
 
     private fun scaleToScreen(src: Bitmap): Bitmap {
         if (src.width == SW && src.height == SH) return src
-        // 引き伸ばさずレターボックス（アスペクト維持）— ROIずれの主因を防ぐ
+        // 画面全体に引き伸ばし（公式フォールバックと同じ考え方。ROIを画面座標に載せる）
         val out = Bitmap.createBitmap(SW, SH, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(out)
-        canvas.drawColor(android.graphics.Color.BLACK)
-        val scale = minOf(SW.toFloat() / src.width, SH.toFloat() / src.height)
-        val nw = (src.width * scale).toInt().coerceAtLeast(1)
-        val nh = (src.height * scale).toInt().coerceAtLeast(1)
-        val dx = (SW - nw) / 2
-        val dy = (SH - nh) / 2
-        canvas.drawBitmap(src, null, Rect(dx, dy, dx + nw, dy + nh), Paint(Paint.FILTER_BITMAP_FLAG))
+        Canvas(out).drawBitmap(src, null, Rect(0, 0, SW, SH), Paint(Paint.FILTER_BITMAP_FLAG))
         return out
     }
 
