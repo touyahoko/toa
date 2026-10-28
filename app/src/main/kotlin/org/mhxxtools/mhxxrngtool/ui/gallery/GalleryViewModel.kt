@@ -161,7 +161,11 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 status = "接続OK。② 右側のQR（またはページ用）を枠に合わせてください。\n自動で画像を保存します。"
             )
         }
-        // 接続後、URL QRなしでもサーバーを試す
+        lastHandled = "" // ②のQRも受け付ける
+        _state.update {
+            it.copy(status = "接続OK。data.json から自動取得中…（②のQR不要）")
+        }
+        // ②不要: data.json / img/ から直接取得（リトライ込み）
         tryDownload("http://192.168.0.1/")
     }
 

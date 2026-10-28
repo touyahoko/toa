@@ -78,9 +78,19 @@ object SwitchTransfer {
         if (um.find()) {
             return ParseResult(url = um.group(), raw = text)
         }
-        if (text.contains("192.168.0.1") || text.startsWith("http", ignoreCase = true)) {
-            val u = if (text.startsWith("http", ignoreCase = true)) text else "http://$text"
+        // 2つ目QR: httpなしの 192.168.0.1/index.html など
+        val bare = text.trim()
+        if (bare.contains("192.168.0.1") || bare.startsWith("index.html", ignoreCase = true)) {
+            val u = when {
+                bare.startsWith("http", ignoreCase = true) -> bare
+                bare.startsWith("/") -> "http://192.168.0.1$bare"
+                bare.contains("/") -> "http://$bare"
+                else -> "http://192.168.0.1/index.html"
+            }
             return ParseResult(url = u, raw = text)
+        }
+        if (bare.startsWith("http", ignoreCase = true)) {
+            return ParseResult(url = bare, raw = text)
         }
         return ParseResult(raw = text)
     }
@@ -128,43 +138,70 @@ object SwitchTransfer {
     suspend fun downloadAllToGallery(context: Context, baseUrl: String = "http://192.168.0.1/"): List<GalleryItem> =
         withContext(Dispatchers.IO) {
             val saved = mutableListOf<GalleryItem>()
-            val root = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-            val candidates = listOf(
-                root,
-                root + "index.html",
-                "http://192.168.0.1/",
-                "http://192.168.0.1/index.html"
-            )
-            var html: String? = null
-            for (u in candidates) {
-                html = httpGetString(u)
-                if (!html.isNullOrBlank()) break
+            val root = "http://192.168.0.1/"
+
+            // 公式: data.json → FileNames → /img/<name>
+            var json: String? = null
+            repeat(8) { attempt ->
+                json = httpGetString(root + "data.json")
+                if (!json.isNullOrBlank()) return@repeat
+                try { Thread.sleep(500L + attempt * 300L) } catch (_: Exception) {}
             }
-            val page = html ?: return@withContext emptyList()
-            val links = extractMediaLinks(page, root)
-            for (link in links) {
-                try {
-                    val bytes = httpGetBytes(link) ?: continue
-                    if (bytes.size < 100) continue
-                    val name = link.substringAfterLast('/').substringBefore('?').ifBlank { null }
-                    saved += GalleryStore.saveBytes(context, bytes, name)
-                } catch (e: Exception) {
-                    Log.e(TAG, "download $link", e)
+
+            if (!json.isNullOrBlank()) {
+                val names = extractFileNames(json!!)
+                Log.i(TAG, "data.json files: $names")
+                for (name in names) {
+                    val url = root + "img/" + name
+                    try {
+                        val bytes = httpGetBytes(url) ?: continue
+                        if (bytes.size < 100) continue
+                        saved += GalleryStore.saveBytes(context, bytes, name)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "img $name", e)
+                    }
                 }
+                if (saved.isNotEmpty()) return@withContext saved
             }
-            // 単枚直リンク想定で data 系も試す
-            if (saved.isEmpty()) {
-                for (i in 0..9) {
-                    for (path in listOf("img/$i.jpg", "data/$i.jpg", "image$i.jpg", "screen$i.jpg")) {
-                        val bytes = httpGetBytes(root + path) ?: continue
-                        if (bytes.size > 1000) {
-                            saved += GalleryStore.saveBytes(context, bytes, path.substringAfterLast('/'))
-                        }
+
+            // フォールバック: index.html からリンク抽出
+            val html = httpGetString(root + "index.html")
+                ?: httpGetString(root)
+                ?: httpGetString(baseUrl)
+            if (!html.isNullOrBlank()) {
+                val links = extractMediaLinks(html, root)
+                for (link in links) {
+                    try {
+                        val bytes = httpGetBytes(link) ?: continue
+                        if (bytes.size < 100) continue
+                        val name = link.substringAfterLast('/').substringBefore('?').ifBlank { null }
+                        saved += GalleryStore.saveBytes(context, bytes, name)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "link $link", e)
                     }
                 }
             }
             saved
         }
+
+    /** data.json の FileNames 配列を抜く（簡易JSON） */
+    private fun extractFileNames(json: String): List<String> {
+        val out = mutableListOf<String>()
+        // "FileNames":["a.jpg","b.mp4"] または "FileNames": [ ... ]
+        val m = Pattern.compile(
+            "\"FileNames\"\\s*:\\s*\\[([^\\]]*)\\]",
+            Pattern.CASE_INSENSITIVE
+        ).matcher(json)
+        if (m.find()) {
+            val body = m.group(1) ?: return emptyList()
+            val sm = Pattern.compile("\"([^\"]+)\"").matcher(body)
+            while (sm.find()) {
+                val n = sm.group(1) ?: continue
+                if (n.isNotBlank()) out += n
+            }
+        }
+        return out
+    }
 
     private fun extractMediaLinks(html: String, base: String): List<String> {
         val out = LinkedHashSet<String>()
