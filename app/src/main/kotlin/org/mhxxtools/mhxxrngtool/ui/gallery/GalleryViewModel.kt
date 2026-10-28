@@ -60,6 +60,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onQrScanned(raw: String) {
         viewModelScope.launch {
+            if (raw.isBlank()) {
+                _state.update { it.copy(scanning = false, status = "QRを認識できませんでした。もう一度撮影してください。") }
+                return@launch
+            }
             val parsed = SwitchTransfer.parseQr(raw)
             when {
                 parsed.wifi != null -> {
@@ -88,6 +92,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update {
                         it.copy(
                             isBusy = false,
+                            scanning = false,
                             status = if (saved.isNotEmpty())
                                 "${saved.size} 件をギャラリーに保存しました"
                             else
@@ -102,6 +107,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update {
                         it.copy(
                             isBusy = false,
+                            scanning = false,
                             status = if (saved.isNotEmpty())
                                 "${saved.size} 件をギャラリーに保存しました"
                             else
