@@ -386,13 +386,31 @@ fun OcrScreen(
             }
             itemsIndexed(s.frameResults) { index, result ->
                 Card(
-                    onClick = { onFrameTap(result.frame) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = cardShape,
                     colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface),
                     border = BorderStroke(1.dp, HtmlColors.Border)
                 ) {
-                    FrameResultRow(index = index + 1, result = result)
+                    Column {
+                        FrameResultRow(
+                            index = index + 1,
+                            result = result,
+                            onClick = { onFrameTap(result.frame) }
+                        )
+                        Button(
+                            onClick = { onFrameTap(result.frame) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HtmlColors.Accent,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("このフレームをタイマーへ")
+                        }
+                    }
                 }
             }
         }

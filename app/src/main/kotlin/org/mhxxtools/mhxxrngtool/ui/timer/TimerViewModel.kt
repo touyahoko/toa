@@ -113,7 +113,24 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 後方互換: 単体タップは目標として扱う */
-    fun applyFromFrame(frame: Long) = setTargetFrame(frame)
+    fun applyFromFrame(frame: Long) = applyTargetFromSearch(frame)
+
+    /**
+     * 検索／鑑定結果タップ用。
+     * 現在地が未設定なら 0 とし、目標フレームをセットして分・秒・連打を一括反映する。
+     */
+    fun applyTargetFromSearch(frame: Long) {
+        val tgt = frame.coerceAtLeast(0L)
+        val cur = _state.value.currentPosFrame.let { if (it >= 0L) it else 0L }
+        _state.update {
+            it.copy(
+                currentPosFrame = cur,
+                targetFrame = tgt,
+                lastAppliedFrame = tgt
+            )
+        }
+        recalculateSnipe()
+    }
 
     /**
      * 残り = 目標 − 現在地
