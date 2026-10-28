@@ -4,4 +4,5 @@
     <cache-path name="mhxx_capture" path="." />
     <!-- ギャラリー選択 (外部ストレージ) -->
     <external-path name="external_files" path="." />
+    <files-path name="switch_gallery" path="switch_gallery/" />
 </paths>

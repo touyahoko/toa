@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,8 +52,12 @@ import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
+import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryScreen
+import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryViewModel
+import org.mhxxtools.mhxxrngtool.ui.settings.SettingsScreen
+import android.net.Uri
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "ギャラリー")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -63,6 +68,8 @@ fun MainScreen(appState: AppStateViewModel) {
     val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
+    val galleryVm: GalleryViewModel = viewModel()
+    var showSettings by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -127,6 +134,11 @@ fun MainScreen(appState: AppStateViewModel) {
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                HtmlChip(
+                    label = "設定",
+                    selected = showSettings,
+                    onClick = { showSettings = !showSettings }
+                )
             }
 
             Spacer(Modifier.height(2.dp))
@@ -195,6 +207,32 @@ fun MainScreen(appState: AppStateViewModel) {
                     }
                 )
                 6 -> TimerScreen(vm = timerVm)
+                7 -> GalleryScreen(
+                    vm = galleryVm,
+                    onUseImage = { uri ->
+                        ocrVm.recognizeFromUri(context, uri, appState.kind)
+                        selectedTab = 5
+                    },
+                    onUseVideo = { uri ->
+                        // 調合タブへ（動画パス）
+                        selectedTab = 2
+                    }
+                )
+            }
+            if (showSettings) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(HtmlColors.Bg)
+                ) {
+                    SettingsScreen(
+                        onOpenGallery = {
+                            showSettings = false
+                            selectedTab = 7
+                        },
+                        onClearGallery = { galleryVm.refresh() }
+                    )
+                }
             }
         }
     }

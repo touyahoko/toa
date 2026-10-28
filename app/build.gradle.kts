@@ -74,6 +74,11 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
     // ML Kit Latin OCR - 数字読取用 (調合動画解析)
     implementation("com.google.mlkit:text-recognition:16.0.0")
+    // QR (Switch スマホへ送る)
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
 
     // OpenCV — 射影(ORB+RANSAC) / トップハット / テンプレ照合 (note TL;DR 方式)
     implementation("org.opencv:opencv:4.10.0")
