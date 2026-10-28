@@ -18,18 +18,42 @@ data class GalleryUiState(
     val status: String = "",
     val isBusy: Boolean = false,
     val lastWifiHint: String = "",
-    val scanning: Boolean = false
+    val scanning: Boolean = false,
+    /** ライブカメラ表示中 */
+    val liveScan: Boolean = false,
+    /** フェーズ: idle / wait_wifi / connecting / wait_url / downloading / done */
+    val phase: String = "idle",
+    val wifiConnected: Boolean = false
 )
 
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(GalleryUiState())
     val state: StateFlow<GalleryUiState> = _state.asStateFlow()
 
+    private var lastHandled: String = ""
+
     init { refresh() }
 
     fun refresh() {
+        _state.update { it.copy(items = GalleryStore.list(getApplication())) }
+    }
+
+    fun openLiveScan() {
+        lastHandled = ""
         _state.update {
-            it.copy(items = GalleryStore.list(getApplication()))
+            it.copy(
+                liveScan = true,
+                scanning = true,
+                phase = "wait_wifi",
+                status = "① Switchの左側（Wi-Fi）QRを枠に合わせてください",
+                wifiConnected = false
+            )
+        }
+    }
+
+    fun closeLiveScan() {
+        _state.update {
+            it.copy(liveScan = false, scanning = false, phase = if (it.items.isNotEmpty()) "done" else "idle")
         }
     }
 
@@ -58,88 +82,108 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(status = "ギャラリーを空にしました") }
     }
 
+    fun setScanning(v: Boolean) = _state.update { it.copy(scanning = v) }
+
+    /** ライブ／静止画どちらからでも同一処理 */
     fun onQrScanned(raw: String) {
+        if (raw.isBlank()) {
+            _state.update { it.copy(status = "QR未検出。角度や明るさを変えてください。") }
+            return
+        }
+        // 同一文字列の連打を無視
+        if (raw == lastHandled) return
+        lastHandled = raw
+
         viewModelScope.launch {
-            if (raw.isBlank()) {
-                _state.update { it.copy(scanning = false, status = "QRを認識できませんでした。もう一度撮影してください。") }
-                return@launch
-            }
             val parsed = SwitchTransfer.parseQr(raw)
             when {
-                parsed.wifi != null -> {
-                    val w = parsed.wifi
-                    _state.update {
-                        it.copy(
-                            isBusy = true,
-                            status = "Switch AP に接続中…\nSSID: ${w.ssid}",
-                            lastWifiHint = "SSID: ${w.ssid}\nパスワード: ${w.password}"
-                        )
-                    }
-                    val ok = SwitchTransfer.connectWifi(getApplication(), w)
-                    if (!ok) {
-                        _state.update {
-                            it.copy(
-                                isBusy = false,
-                                status = "自動接続に失敗しました。Wi-Fi設定で次を手動接続してから「Switchから取得」を押してください。\n" +
-                                    "SSID: ${w.ssid}\nPASS: ${w.password}"
-                            )
-                        }
-                        return@launch
-                    }
-                    _state.update { it.copy(status = "接続OK。メディア取得中…") }
-                    val saved = SwitchTransfer.downloadAllToGallery(getApplication())
-                    refresh()
-                    _state.update {
-                        it.copy(
-                            isBusy = false,
-                            scanning = false,
-                            status = if (saved.isNotEmpty())
-                                "${saved.size} 件をギャラリーに保存しました"
-                            else
-                                "接続はできましたがメディアが見つかりません。2つ目のQRを読み取るか「Switchから取得」を再試行してください。"
-                        )
-                    }
-                }
-                parsed.url != null -> {
-                    _state.update { it.copy(isBusy = true, status = "URLから取得中…\n${parsed.url}") }
-                    val saved = SwitchTransfer.downloadAllToGallery(getApplication(), parsed.url)
-                    refresh()
-                    _state.update {
-                        it.copy(
-                            isBusy = false,
-                            scanning = false,
-                            status = if (saved.isNotEmpty())
-                                "${saved.size} 件をギャラリーに保存しました"
-                            else
-                                "取得失敗。Switchに接続済みか確認してください。"
-                        )
-                    }
-                }
+                parsed.wifi != null -> handleWifi(parsed.wifi)
+                parsed.url != null -> handleUrl(parsed.url)
                 else -> {
-                    _state.update {
-                        it.copy(status = "QRを解析できませんでした:\n${parsed.raw.take(120)}")
+                    // 生テキストに WIFI: や http が埋もれている場合
+                    val again = SwitchTransfer.parseQr(raw.replace("\n", "").replace(" ", ""))
+                    when {
+                        again.wifi != null -> handleWifi(again.wifi)
+                        again.url != null -> handleUrl(again.url)
+                        else -> _state.update {
+                            it.copy(status = "QR形式が不明です（Wi-FiまたはURL用）。\n${raw.take(80)}")
+                        }
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun handleWifi(w: SwitchTransfer.WifiInfo) {
+        _state.update {
+            it.copy(
+                isBusy = true,
+                phase = "connecting",
+                status = "Wi-Fi接続中… SSID: ${w.ssid}\n（端末の接続確認が出たら許可）",
+                lastWifiHint = "SSID: ${w.ssid}\nパスワード: ${w.password}"
+            )
+        }
+        val ok = SwitchTransfer.connectWifi(getApplication(), w)
+        if (!ok) {
+            _state.update {
+                it.copy(
+                    isBusy = false,
+                    wifiConnected = false,
+                    phase = "wait_wifi",
+                    status = "自動接続できませんでした。端末のWi-Fiで次を接続後、②のQRをかざすか「再取得」を押してください。\nSSID: ${w.ssid}\nPASS: ${w.password}"
+                )
+            }
+            lastHandled = "" // 再試行可
+            return
+        }
+        _state.update {
+            it.copy(
+                isBusy = false,
+                wifiConnected = true,
+                phase = "wait_url",
+                status = "接続OK。② 右側のQR（またはページ用）を枠に合わせてください。\n自動で画像を保存します。"
+            )
+        }
+        // 接続後、URL QRなしでもサーバーを試す
+        tryDownload("http://192.168.0.1/")
+    }
+
+    private suspend fun handleUrl(url: String) {
+        _state.update {
+            it.copy(isBusy = true, phase = "downloading", status = "ダウンロード中…\n$url")
+        }
+        tryDownload(url)
+    }
+
+    private suspend fun tryDownload(base: String) {
+        val saved = SwitchTransfer.downloadAllToGallery(getApplication(), base)
+        refresh()
+        if (saved.isNotEmpty()) {
+            _state.update {
+                it.copy(
+                    isBusy = false,
+                    liveScan = false,
+                    scanning = false,
+                    phase = "done",
+                    status = "完了: ${saved.size} 件を自動保存しました"
+                )
+            }
+        } else {
+            _state.update {
+                it.copy(
+                    isBusy = false,
+                    phase = if (it.wifiConnected) "wait_url" else "wait_wifi",
+                    status = "メディア未取得。②のQRをかざすか、接続後に「再取得」を押してください。"
+                )
+            }
+            lastHandled = ""
         }
     }
 
     fun fetchFromSwitch() {
         viewModelScope.launch {
             _state.update { it.copy(isBusy = true, status = "http://192.168.0.1/ から取得中…") }
-            val saved = SwitchTransfer.downloadAllToGallery(getApplication())
-            refresh()
-            _state.update {
-                it.copy(
-                    isBusy = false,
-                    status = if (saved.isNotEmpty())
-                        "${saved.size} 件を保存しました"
-                    else
-                        "取得できませんでした。SwitchのQR接続後に再試行してください。"
-                )
-            }
+            tryDownload("http://192.168.0.1/")
         }
     }
-
-    fun setScanning(v: Boolean) = _state.update { it.copy(scanning = v) }
 }

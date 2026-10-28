@@ -31,12 +31,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -46,14 +43,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.common.InputImage
 import org.mhxxtools.mhxxrngtool.switchtransfer.GalleryItem
 import org.mhxxtools.mhxxrngtool.switchtransfer.GalleryKind
 import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 @Composable
 fun SettingsScreen(
@@ -63,45 +56,33 @@ fun SettingsScreen(
 ) {
     val s by galleryVm.state.collectAsState()
     val context = LocalContext.current
-    var pendingQr by remember { mutableStateOf<Uri?>(null) }
-
-    val takePicture = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicturePreview()
-    ) { bmp ->
-        if (bmp != null) {
-            // save temp and decode
-            val f = java.io.File(context.cacheDir, "qr_capture.jpg")
-            java.io.FileOutputStream(f).use { out ->
-                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
-            }
-            pendingQr = Uri.fromFile(f)
-        }
-    }
-
-    val pickQrImage = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri -> pendingQr = uri }
 
     val cameraPerm = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { ok -> if (ok) takePicture.launch(null) }
+    ) { ok ->
+        if (ok) galleryVm.openLiveScan()
+        else {
+            /* 権限拒否 */
+        }
+    }
 
     val importPick = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> uri?.let { galleryVm.importUri(it) } }
 
-    LaunchedEffect(pendingQr) {
-        val uri = pendingQr ?: return@LaunchedEffect
-        pendingQr = null
-        galleryVm.setScanning(true)
-        val raw = decodeQr(context, uri)
-        if (raw != null) {
-            galleryVm.onQrScanned(raw)
-        } else {
-            galleryVm.setScanning(false)
-            // status via busy flag - set message
-            galleryVm.onQrScanned("") // will show parse fail - better set status
+    // ライブQRスキャン（全画面）
+    if (s.liveScan) {
+        val hint = when (s.phase) {
+            "connecting" -> "Wi-Fi接続中… 確認ダイアログがあれば許可してください"
+            "wait_url", "downloading" -> "② 右側のQR（URL）を枠に合わせてください"
+            else -> "① 左側のQR（Wi-Fi）を枠に合わせてください。続けて②も自動で読みます"
         }
+        LiveQrScanner(
+            hint = hint,
+            onQr = { galleryVm.onQrScanned(it) },
+            onClose = { galleryVm.closeLiveScan() }
+        )
+        return
     }
 
     Column(
@@ -127,10 +108,10 @@ fun SettingsScreen(
             border = BorderStroke(1.dp, HtmlColors.Border)
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Switch から自動取り込み", fontWeight = FontWeight.SemiBold, color = HtmlColors.Text)
+                Text("Switch から全自動取り込み", fontWeight = FontWeight.SemiBold, color = HtmlColors.Text)
                 Text(
-                    "Switch アルバム → 共有 → スマートフォンへ送る のQRをカメラで読み取ります。\n" +
-                        "①Wi-Fi用QR → 接続　②URL用QR → 画像・動画をアプリ内に自動保存",
+                    "カメラをSwitchのQRにかざすだけで接続〜保存まで進みます。\n" +
+                        "① Wi-Fi用QR → 接続　② URL用QR → 画像・動画を自動保存",
                     fontSize = 12.sp,
                     color = HtmlColors.Muted
                 )
@@ -140,23 +121,16 @@ fun SettingsScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = HtmlColors.Accent),
                     enabled = !s.isBusy
                 ) {
-                    Text("カメラでQRを読む", color = Color.White)
-                }
-                OutlinedButton(
-                    onClick = { pickQrImage.launch("image/*") },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !s.isBusy
-                ) {
-                    Text("QR画像を選ぶ")
+                    Text("カメラでQRをかざす（自動）", color = Color.White)
                 }
                 OutlinedButton(
                     onClick = { galleryVm.fetchFromSwitch() },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !s.isBusy
                 ) {
-                    Text("接続済みなら Switchから再取得")
+                    Text("接続済みなら再取得")
                 }
-                if (s.isBusy || s.scanning) {
+                if (s.isBusy) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(
                             Modifier.padding(end = 8.dp),
@@ -201,9 +175,8 @@ fun SettingsScreen(
                 ) {
                     Text("端末ギャラリーから追加")
                 }
-
                 if (s.items.isEmpty()) {
-                    Text("まだありません。上のカメラでQRを読み取ってください。", fontSize = 12.sp, color = HtmlColors.Muted)
+                    Text("まだありません。上のカメラでQRをかざしてください。", fontSize = 12.sp, color = HtmlColors.Muted)
                 } else {
                     s.items.chunked(2).forEach { row ->
                         Row(
@@ -241,7 +214,6 @@ fun SettingsScreen(
                 Text("アプリ情報", fontWeight = FontWeight.SemiBold, color = HtmlColors.Text)
                 Text("MHXX RNG Tool", fontSize = 13.sp, color = HtmlColors.Text)
                 Text("鑑定: 錬金リーダー方式（公式134）", fontSize = 12.sp, color = HtmlColors.Muted)
-                Text("写真は端末内のみで処理します", fontSize = 12.sp, color = HtmlColors.Muted)
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -288,17 +260,3 @@ private fun SavedTile(item: GalleryItem, onUse: () -> Unit, onDelete: () -> Unit
         }
     }
 }
-
-private suspend fun decodeQr(context: android.content.Context, uri: Uri): String? =
-    suspendCoroutine { cont ->
-        try {
-            val image = InputImage.fromFilePath(context, uri)
-            BarcodeScanning.getClient().process(image)
-                .addOnSuccessListener { list ->
-                    cont.resume(list.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue)
-                }
-                .addOnFailureListener { cont.resume(null) }
-        } catch (_: Exception) {
-            cont.resume(null)
-        }
-    }
