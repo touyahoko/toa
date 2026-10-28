@@ -108,9 +108,9 @@ fun SettingsScreen(
             border = BorderStroke(1.dp, HtmlColors.Border)
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Switch から全自動取り込み", fontWeight = FontWeight.SemiBold, color = HtmlColors.Text)
+                Text("Switch から取り込み", fontWeight = FontWeight.SemiBold, color = HtmlColors.Text)
                 Text(
-                    "カメラをSwitchのQRにかざすだけで接続〜保存まで進みます。\n" +
+                    "① Wi-Fi用QRをかざす → 接続許可（または手動でSwitchのSSIDに接続）→ 自動保存。" +
                         "① Wi-Fi用QR → 接続　② URL用QR → 画像・動画を自動保存",
                     fontSize = 12.sp,
                     color = HtmlColors.Muted
@@ -122,6 +122,18 @@ fun SettingsScreen(
                     enabled = !s.isBusy
                 ) {
                     Text("カメラでQRをかざす（自動）", color = Color.White)
+                }
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            val i = android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
+                            context.startActivity(i)
+                        } catch (_: Exception) {}
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !s.isBusy
+                ) {
+                    Text("Wi-Fi設定を開く（手動接続）")
                 }
                 OutlinedButton(
                     onClick = { galleryVm.fetchFromSwitch() },

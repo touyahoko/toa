@@ -26,6 +26,7 @@ import kotlin.coroutines.resume
  */
 object SwitchTransfer {
     private const val TAG = "SwitchTransfer"
+    private const val ROOT = "http://192.168.0.1/"
     private val URL_RE = Pattern.compile("https?://[^\\s\"'<>]+", Pattern.CASE_INSENSITIVE)
     private val WIFI_KV = Pattern.compile("([STP]):([^;]*)", Pattern.CASE_INSENSITIVE)
 
@@ -130,7 +131,32 @@ object SwitchTransfer {
                 } catch (e: Exception) {
                     Log.e(TAG, "requestNetwork", e)
                     if (cont.isActive) cont.resume(false)
+           /**
+     * 手動で Switch AP に繋いだあとを待つ。
+     * 192.168.0.1/data.json が応答するまで [timeoutMs] ポーリング。
+     */
+    suspend fun waitUntilReachable(timeoutMs: Long = 90_000L): Boolean =
+        withContext(Dispatchers.IO) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            var n = 0
+            while (System.currentTimeMillis() < deadline) {
+                n++
+                val j = httpGetString(ROOT + "data.json")
+                if (!j.isNullOrBlank()) {
+                    Log.i(TAG, "reachable after $n tries")
+                    return@withContext true
                 }
+                val h = httpGetString(ROOT)
+                if (!h.isNullOrBlank()) {
+                    Log.i(TAG, "root reachable after $n tries")
+                    return@withContext true
+                }
+                try { Thread.sleep(1000L) } catch (_: Exception) {}
+            }
+            false
+        }
+
+         }
             }
         } ?: false
     }

@@ -1,7 +1,12 @@
 package org.mhxxtools.mhxxrngtool.ui.gallery
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -136,36 +141,62 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 isBusy = true,
                 phase = "connecting",
-                status = "Wi-Fi接続中… SSID: ${w.ssid}\n（端末の接続確認が出たら許可）",
+                status = "Wi-Fi接続中…\nSSID: ${w.ssid}\n（「接続」が出たら必ず許可）",
                 lastWifiHint = "SSID: ${w.ssid}\nパスワード: ${w.password}"
             )
         }
+
+        // クリップボードにコピー（手動接続用）
+        try {
+            val cm = getApplication<Application>().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("switch_wifi", "SSID: ${w.ssid}\nPASS: ${w.password}"))
+        } catch (_: Exception) {}
+
         val ok = SwitchTransfer.connectWifi(getApplication(), w)
         if (!ok) {
             _state.update {
                 it.copy(
-                    isBusy = false,
+                    isBusy = true,
                     wifiConnected = false,
-                    phase = "wait_wifi",
-                    status = "自動接続できませんでした。端末のWi-Fiで次を接続後、②のQRをかざすか「再取得」を押してください。\nSSID: ${w.ssid}\nPASS: ${w.password}"
+                    phase = "manual_wifi",
+                    status = "自動接続できませんでした。\n" +
+                        "①下の「Wi-Fi設定を開く」→「${w.ssid}」に接続\n" +
+                        "　パスワード: ${w.password}（コピー済み）\n" +
+                        "②接続後、この画面に戻ると自動で画像取得を続けます…",
+                    lastWifiHint = "SSID: ${w.ssid}\nパスワード: ${w.password}"
                 )
             }
-            lastHandled = "" // 再試行可
-            return
+            // Wi-Fi設定を開く
+            try {
+                val i = Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                getApplication<Application>().startActivity(i)
+            } catch (_: Exception) {}
+
+            // 手動接続を最大90秒ポーリング
+            val reached = SwitchTransfer.waitUntilReachable(90_000L)
+            if (!reached) {
+                _state.update {
+                    it.copy(
+                        isBusy = false,
+                        phase = "wait_wifi",
+                        status = "Switchに届きませんでした。\nSSID ${w.ssid} に接続してから「再取得」を押してください。\nPASS: ${w.password}"
+                    )
+                }
+                lastHandled = ""
+                return
+            }
+            _state.update { it.copy(wifiConnected = true, status = "接続確認OK。画像を取得中…") }
+        } else {
+            _state.update {
+                it.copy(
+                    wifiConnected = true,
+                    phase = "downloading",
+                    status = "接続OK。画像・動画を自動取得中…"
+                )
+            }
         }
-        _state.update {
-            it.copy(
-                isBusy = false,
-                wifiConnected = true,
-                phase = "wait_url",
-                status = "接続OK。② 右側のQR（またはページ用）を枠に合わせてください。\n自動で画像を保存します。"
-            )
-        }
-        lastHandled = "" // ②のQRも受け付ける
-        _state.update {
-            it.copy(status = "接続OK。data.json から自動取得中…（②のQR不要）")
-        }
-        // ②不要: data.json / img/ から直接取得（リトライ込み）
+
+        lastHandled = ""
         tryDownload("http://192.168.0.1/")
     }
 
