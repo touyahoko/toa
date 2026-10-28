@@ -244,6 +244,17 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
         val earlyMs = parseMs(s.earlyMin, s.earlySec)
         val activeMs = (totalMs - earlyMs).coerceAtLeast(0)
 
+        // 停止時の再計算用
+        remainingAtStart = when {
+            s.remainingFrames >= 0L -> s.remainingFrames
+            s.targetFrame >= 0L && s.currentPosFrame >= 0L ->
+                (s.targetFrame - s.currentPosFrame).coerceAtLeast(0L)
+            s.targetFrame >= 0L -> s.targetFrame
+            else -> ((totalMs / 1000.0) * FPS).toLong()
+        }
+        countdownTotalMsAtStart = activeMs
+        countdownStartMs = 0L
+
         _state.update { it.copy(isRunning = true) }
         countdownJob = viewModelScope.launch {
             if (delayMs > 0) {
@@ -256,8 +267,10 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
                     delay(16)
                 }
             }
+            if (!isActive) return@launch
+            countdownStartMs = System.currentTimeMillis()
             _state.update { it.copy(phaseLabel = "カウント中") }
-            val t1 = System.currentTimeMillis()
+            val t1 = countdownStartMs
             var lastBeepSec = -1
             while (isActive) {
                 val left = activeMs - (System.currentTimeMillis() - t1)
@@ -271,6 +284,7 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
                 delay(16)
             }
             if (isActive) {
+                applyElapsedFrames(activeMs)
                 beep(false)
                 if (_state.value.loop) {
                     startCountdown()
@@ -283,9 +297,57 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 停止: 開始〜停止の経過時間から消費フレームを算出し、
+     * 現在地・残り・連打数・分秒を再計算する。
+     */
     fun stopCountdown() {
+        val started = countdownStartMs
+        val elapsedMs = if (started > 0L) {
+            (System.currentTimeMillis() - started).coerceAtLeast(0L)
+        } else {
+            0L
+        }
         countdownJob?.cancel()
-        _state.update { it.copy(isRunning = false, phaseLabel = "停止") }
+        countdownJob = null
+        applyElapsedFrames(elapsedMs)
+        _state.update {
+            it.copy(
+                isRunning = false,
+                phaseLabel = if (elapsedMs > 0L) "停止（フレーム再計算済）" else "停止"
+            )
+        }
+        countdownStartMs = 0L
+    }
+
+    /** 経過ms分フレームを進め、残りとタイマー表示を更新 */
+    private fun applyElapsedFrames(elapsedMs: Long) {
+        if (remainingAtStart < 0L && countdownTotalMsAtStart <= 0L) return
+        val advanced = ((elapsedMs / 1000.0) * FPS).toLong().coerceAtLeast(0L)
+        val s = _state.value
+        val cur0 = if (s.currentPosFrame >= 0L) s.currentPosFrame else 0L
+        val newCur = cur0 + advanced
+        val tgt = s.targetFrame
+        val newRem = when {
+            tgt >= 0L -> (tgt - newCur).coerceAtLeast(0L)
+            remainingAtStart >= 0L -> (remainingAtStart - advanced).coerceAtLeast(0L)
+            else -> 0L
+        }
+        _state.update {
+            it.copy(
+                currentPosFrame = newCur,
+                remainingFrames = newRem,
+                lastAppliedFrame = if (tgt >= 0L) tgt else newCur
+            )
+        }
+        if (newRem >= 0L) {
+            applyRemaining(
+                newRem,
+                "停止再計算: 経過約 ${elapsedMs / 1000.0} 秒 ≈ ${advanced}F 進行\n" +
+                    "現在地 F$newCur" + (if (tgt >= 0L) " → 目標 F$tgt" else "")
+            )
+        }
+        remainingAtStart = newRem
     }
 
     fun resetCountdown() {
