@@ -98,21 +98,102 @@ object GalleryStore {
         val ext = extFor(kind, suggestedName, head)
         // 元ファイル名を可能な限り残す
         val base = suggestedName
+            ?.substringAfterLast('/')
             ?.substringBeforeLast('.')
-            ?.takeIf { it.isNotBlank() }
-            ?: SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val safeBase = base.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80)
-        val name = "$safeBase.$ext"
+            ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            ?.take(80)
+            ?.ifBlank { null }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val name = if (base != null) "${base}_$stamp.$ext" else "sw_$stamp.$ext"
         val out = File(dir(context), name)
         FileOutputStream(out).use { it.write(bytes) }
-        return GalleryItem(out.name, out, kind, out.lastModified(), out.name, out.length())
+        return GalleryItem(name, out, kind, out.lastModified(), name, out.length())
     }
 
-    fun delete(context: Context, item: GalleryItem): Boolean {
-        return item.file.delete()
+    /** ストリーム保存（動画向け） */
+    fun saveFromStream(
+        context: Context,
+        input: java.io.InputStream,
+        suggestedName: String?,
+        expectedSize: Long = -1
+    ): GalleryItem? {
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val tmp = File(dir(context), "tmp_$stamp.bin")
+        var written = 0L
+        val headBuf = ByteArray(12)
+        var headLen = 0
+        FileOutputStream(tmp).use { out ->
+            val buf = ByteArray(64 * 1024)
+            var first = true
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                if (first) {
+                    headLen = minOf(12, n)
+                    System.arraycopy(buf, 0, headBuf, 0, headLen)
+                    first = false
+                }
+                out.write(buf, 0, n)
+                written += n
+            }
+        }
+        if (written < 64) {
+            tmp.delete()
+            return null
+        }
+        if (expectedSize > 0 && written < expectedSize * 0.95) {
+            // 不完全ダウンロード
+            tmp.delete()
+            return null
+        }
+        val kind = detectKindFromBytes(headBuf.copyOf(headLen))
+            ?: when {
+                suggestedName?.endsWith(".mp4", true) == true -> GalleryKind.VIDEO
+                else -> GalleryKind.IMAGE
+            }
+        val ext = extFor(kind, suggestedName, headBuf)
+        val base = suggestedName
+            ?.substringAfterLast('/')
+            ?.substringBeforeLast('.')
+            ?.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            ?.take(80)
+            ?.ifBlank { null }
+        val name = if (base != null) "${base}_$stamp.$ext" else "sw_$stamp.$ext"
+        val out = File(dir(context), name)
+        if (out.exists()) out.delete()
+        if (!tmp.renameTo(out)) {
+            tmp.copyTo(out, overwrite = true)
+            tmp.delete()
+        }
+        return GalleryItem(name, out, kind, out.lastModified(), name, out.length())
     }
 
-    fun clear(context: Context) {
+    fun saveFromUri(context: Context, uri: Uri): GalleryItem? {
+        val cr = context.contentResolver
+        val type = cr.getType(uri) ?: ""
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val tmpName = "imp_$stamp.bin"
+        val tmp = File(dir(context), tmpName)
+        cr.openInputStream(uri)?.use { input ->
+            FileOutputStream(tmp).use { output -> input.copyTo(output) }
+        } ?: return null
+        val kind = detectKind(tmp) ?: when {
+            type.contains("video") -> GalleryKind.VIDEO
+            else -> GalleryKind.IMAGE
+        }
+        val ext = extFor(kind, null, null)
+        val name = "imp_$stamp.$ext"
+        val out = File(dir(context), name)
+        tmp.renameTo(out)
+        return GalleryItem(name, out, kind, out.lastModified(), name, out.length())
+    }
+
+    fun delete(context: Context, id: String): Boolean {
+        val f = File(dir(context), id)
+        return f.exists() && f.delete()
+    }
+
+    fun clearAll(context: Context) {
         dir(context).listFiles()?.forEach { it.delete() }
     }
 }
