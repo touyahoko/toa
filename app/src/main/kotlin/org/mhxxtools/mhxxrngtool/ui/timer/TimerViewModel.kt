@@ -52,6 +52,13 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     private var metJob: Job? = null
     private var tone: ToneGenerator? = null
 
+    /** カウント開始時刻 (ms) — 停止時の経過からフレーム再計算に使う */
+    private var countdownStartMs: Long = 0L
+    /** 開始時点の残りフレーム */
+    private var remainingAtStart: Long = -1L
+    /** 開始時点のカウントダウン総時間 (ms) */
+    private var countdownTotalMsAtStart: Long = 0L
+
     companion object {
         const val FPS = 30.0
         const val SKIP_SIZE = 730L
