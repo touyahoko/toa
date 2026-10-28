@@ -1,158 +1,154 @@
-# MHXX RNG Tool (Kotlin / Android)
+# MHXX RNG Tool (Android)
 
-**Python/Kivy 版 `touyo` を Kotlin/Jetpack Compose へ移植したネイティブ Android アプリ**  
-**HTML 統合ツール (`snipe_modified.html`) のコア機能を上書き統合済み**
+モンスターハンターダブルクロス（MHXX）向けの **護石乱数・鑑定・調合位置特定** ネイティブ Android アプリです。
+
+鑑定認識は [mhxx-renkin-reader](https://github.com/skst328/mhxx-renkin-reader)（錬金リーダー）と同じ **テンプレート照合** を使います（OCR による文字読み取りは使いません）。
 
 | 項目 | 内容 |
 |------|------|
-| 言語 | Kotlin 2.0.21 |
+| 言語 | Kotlin |
 | UI | Jetpack Compose + Material3 |
 | 最小 SDK | Android 7.0 (API 24) |
-| ターゲット SDK | Android 14 (API 34) |
-| OCR | ML Kit (日本語テキスト認識・端末内処理) + HTML準拠スキル辞書/エイリアス |
-| カメラ | CameraX (UVC キャプチャーカード対応) |
-| ハードウェア | Arduino Leonardo (USB CDC) ※コントローラUIは未実装 |
+| ターゲット SDK | API 32 |
+| 鑑定 | 錬金リーダー方式（OpenCV テンプレート照合 + 公式 WASM 保険） |
+| 乱数 | MHXX XorShift 系エンジン（種類: 風化 / 古び / 光る / なぞ） |
 
 ---
 
-## HTML統合ツールからの上書き内容
+## 機能タブ
 
-- **正式スキル名** 205種（略称パディング廃止 → HTML `SKILL` 配列準拠）
-- **検索モード**: スキルから検索 / **フレームから検索**（指定Fのお守り即時表示）
-- **OCRスキルエイリアス** HTML `SKILL_ALIASES` 相当を維持・拡張
-- **乱数エンジン・KIND_TABLES** HTML `KIND_DATA` と整合
-- コントローラ操作UIは実装していません（Arduinoオートは既存のまま任意）
-
----
-
-## 機能タブ一覧
-
-| タブ | 機能 |
+| タブ | 内容 |
 |------|------|
-| 検索 | スキル・スロット検索 (完全一致/以上) + **フレームから検索** |
-| 周辺 | 特定フレーム周辺のお守り一覧表示 |
-| 調合 | 調合数値列からのフレーム特定 |
-| 狙い目 | クエスト / マカフシギ / 天運の有効フレーム計算 |
-| 鑑定読取 | カメラ/ギャラリー写真から ML Kit OCR でスキル認識 → 検索タブへ反映 |
-| 映像 | UVC キャプチャーカード映像のリアルタイム表示 |
-| オート | Arduino Leonardo 連携による自動鑑定ループ（任意） |
+| **検索** | スキル・ポイント・スロット条件でお守りを検索。結果タップでスナイプ時間をタイマーへ反映 |
+| **周辺** | 指定フレーム周辺のお守り一覧 |
+| **調合** | 調合カウンター動画から数値変化を読み取り、現在フレームを推定 |
+| **位置** | フレーム位置まわりの補助表示 |
+| **狙い目** | クエスト報酬・マカ錬金まわりの有効フレーム計算 |
+| **鑑定** | ギャラリー／カメラ画像から護石を読み取り → 検索条件に反映。完全一致フレームがあれば表示 |
+| **タイマー** | 通常スナイプ待機時間・コンテニュー連打法のカウント／メトロノーム |
+
+種類チップ（風化・古び・光る・なぞ）は全タブ共通です。
 
 ---
 
-## GitHub Actions での自動ビルド
+## 鑑定について（重要）
 
-`main` へプッシュするだけで APK が自動ビルドされます。
+### 認識方式
 
-1. **Actions タブ** → `Build Debug APK` を選択
-2. 最新のワークフロー実行を開く
-3. **Artifacts** → `mhxx-rng-tool-debug-<番号>` をダウンロード
-4. `app-debug.apk` を端末に転送してインストール
+1. 画像を **1280×720** 相当に位置合わせ（reference 画像／フォールバックで拡縮）
+2. トップハット前処理 + **NCC テンプレート照合**
+3. スキル名・ポイント・スロットを見本 PNG と照合
+4. ローカル照合が空のときのみ **錬金リーダー互換 WASM** を保険実行
 
-> **タグ**（例：`v1.0.0`）を push すると Release APK も生成され、  
-> GitHub Releases に自動で添付されます。
+### 対応スキル
+
+- **マカフシギ錬金で出る公式 134 スキル**（サイト版錬金リーダーと同じ範囲）
+- 見本: `app/src/main/assets/renkin/skills/{スキルID}.png`
+- スロット: `○` / `---` の見本照合（0〜3）
+
+サイト版で読めないスキル（例: 精密射撃・採取など公式134外）は、本アプリでも対象外です。
+
+### 推奨入力
+
+| 入力 | 推奨度 |
+|------|--------|
+| Switch 本体スクショ（1280×720 前後・16:9） | ◎ |
+| 録画からの切り出し（画角が公式に近い） | ○ |
+| スマホでテレビ画面を斜め撮影 | △（位置合わせに依存） |
+
+写真は端末内のみで処理し、外部送信しません。
 
 ---
 
-## ローカルビルド手順
+## スナイプ時間の目安
 
-### 必要ツール
+検索結果のお守りをタップすると、タイマーに自動入力されます。
+
+- **通常スナイプ**: 残りフレーム ÷ 30 秒前後の待機
+- **コンテニュー連打法**: 長い待ちを連打回数 + 余り待機に分解
+
+（実装・表示はアプリ内タイマー／検索連携を参照）
+
+---
+
+## GitHub Actions で APK を入手
+
+`main` に push すると Debug APK が自動ビルドされます。
+
+1. GitHub リポジトリの **Actions** → **Build Debug APK**
+2. 最新の成功ワークフローを開く
+3. **Artifacts** から `mhxx-rng-tool-debug-…` をダウンロード
+4. 中の `app-debug.apk` を端末に入れてインストール
+
+タグ（例: `v1.0.0`）を push すると Release 用 APK も生成される構成です。
+
+---
+
+## ローカルビルド
+
+### 必要環境
+
 - JDK 17+
-- Android SDK (API 34)
+- Android SDK（API 32 以上のビルドツール）
 
 ### ビルド
-```bash
-# Unix / macOS
-./gradlew assembleDebug
 
-# Windows
-gradlew.bat assembleDebug
+```bash
+./gradlew assembleDebug
 ```
 
-出力先: `app/build/outputs/apk/debug/app-debug.apk`
+出力: `app/build/outputs/apk/debug/app-debug.apk`
 
-### ADB でインストール
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ---
 
-## ハードウェア構成
+## プロジェクト構成（抜粋）
 
 ```
-Android スマートフォン (USB-C)
-  └─ OTG アダプター
-       └─ ANYOYO USB ハブ (または類似 OTG ハブ)
-            ├─ Arduino Leonardo ← USB CDC Serial で接続
-            └─ HDMI キャプチャーカード (UVC) ← Switch 映像入力
-                 └─ Nintendo Switch (HDMI)
-```
-
-### Arduino スケッチ要件
-Arduino Leonardo に以下のコマンドを処理するスケッチを書き込んでください：
-
-| コマンド (UART 受信) | 動作 | 応答 |
-|---|---|---|
-| `READY` | 初期確認 | `OK` |
-| `SEQ:APPRAISE` | Switchで鑑定シーケンス実行 | `DONE` |
-| `SEQ:BACK` | 不一致時の戻りシーケンス | `DONE` |
-
-通信設定: **115200 bps / 8N1**  
-Arduino Leonardo は USB HID + CDC の複合デバイスとして動作します。
-
----
-
-## プロジェクト構成
-
-```
-app/src/main/kotlin/org/mhxxtools/mhxxrngtool/
-├── MainActivity.kt             # エントリーポイント
-├── AppState.kt                 # グローバル状態 (種類/FPS)
-├── rng/
-│   ├── MHXXEngine.kt           # XorShift128 RNG エンジン (Python版の完全移植)
-│   ├── CharmData.kt            # SKILL_NAMES / KIND_TABLES (全4種)
-│   └── RngTypes.kt             # データクラス (Charm, CharmResult, SearchTarget, …)
-├── ocr/
-│   ├── AndroidOcr.kt           # ML Kit 日本語 OCR ラッパー
-│   └── SkillMatcher.kt         # テキスト → スキル名マッチング
-├── hardware/
-│   ├── ArduinoBridge.kt        # USB CDC シリアル通信
-│   ├── CharmDetector.kt        # OCR + 目標照合
-│   └── UsbVideoHelper.kt       # カメラ列挙 / JPEG クロップ
-└── ui/
-    ├── MainScreen.kt           # Scaffold + TabRow ナビゲーション
-    ├── theme/Theme.kt          # Material3 ダークテーマ
-    ├── search/                 # 検索タブ
-    ├── around/                 # 周辺確認タブ
-    ├── combo/                  # 調合スナイプタブ
-    ├── aimpoint/               # 狙い目タブ
-    ├── ocr/                    # 鑑定読取タブ
-    ├── stream/                 # 映像タブ
-    └── auto/                   # オートタブ
+app/src/main/
+├── assets/renkin/
+│   ├── skills/          # 公式 134 スキル見本
+│   ├── digits/          # ポイント数字見本
+│   ├── slots/           # ○ / --- 見本
+│   ├── label.png        # パネル位置合わせ用
+│   └── reference.png    # 画面位置合わせ用
+├── assets/renkin_reader/  # WASM（保険）
+└── kotlin/org/mhxxtools/mhxxrngtool/
+    ├── MainActivity.kt
+    ├── rng/               # 乱数エンジン・スキル名・検索
+    ├── ocr/
+    │   ├── RenkinSwitchReader.kt   # テンプレ照合（本体）
+    │   ├── HybridCharmReader.kt    # ローカル → WASM
+    │   ├── RenkinWasmBridge.kt
+    │   └── OpenCvBridge.kt
+    └── ui/
+        ├── MainScreen.kt
+        ├── search / around / combo / reward / aimpoint
+        ├── ocr/           # 鑑定画面
+        └── timer/
 ```
 
 ---
 
-## 元のPython版との対応
+## 関連リンク
 
-| Python モジュール | Kotlin 移植先 |
-|---|---|
-| `mhxx_rng.py` (XorShift128 / jump / charm生成) | `rng/MHXXEngine.kt` |
-| `screens/search_screen.py` | `ui/search/` |
-| `screens/around_screen.py` | `ui/around/` |
-| `screens/combo_screen.py` | `ui/combo/` |
-| `screens/aimpoint_screen.py` | `ui/aimpoint/` |
-| `screens/ocr_screen.py` | `ui/ocr/` |
-| `screens/stream_screen.py` (Kivy Camera) | `ui/stream/` (CameraX) |
-| `screens/auto_screen.py` | `ui/auto/` |
-| `hardware/arduino_bridge.py` (pyserial) | `hardware/ArduinoBridge.kt` (USB Host API) |
-| `hardware/charm_detector.py` | `hardware/CharmDetector.kt` |
-| `hardware/usb_video.py` (OpenCV UVC) | `hardware/UsbVideoHelper.kt` (CameraX) |
-| `ocr/android_ocr.py` (Pyjnius ML Kit) | `ocr/AndroidOcr.kt` (ネイティブ ML Kit) |
-| `ocr/skill_matcher.py` | `ocr/SkillMatcher.kt` |
+- 鑑定エンジン参考: [mhxx-renkin-reader](https://github.com/skst328/mhxx-renkin-reader)  
+  サイト: https://skst328.github.io/mhxx-renkin-reader/
+- 本リポジトリ: https://github.com/touyahoko/toa
 
 ---
 
-## ライセンス
+## 注意
 
-元プロジェクト (`touyo`) に準じます。
+- 本ツールは非公式の有志ツールです。ゲームの利用規約の範囲で自己責任で使用してください。
+- 鑑定の精度は画角・解像度・圧縮に左右されます。公式に近い Switch スクショを推奨します。
+- 映像キャプチャ専用タブや Arduino コントローラ UI は、現行ビルドでは含みません。
+
+---
+
+## ライセンス・第三者
+
+OpenCV 等の第三者ライセンスは、錬金リーダー側の表記およびプロジェクト内のライセンス表記に従ってください。
