@@ -91,9 +91,9 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            val cleaned = raw.trim().replace("\r", "").replace("\n", "")
-", "").replace("
-", "")
+            val cleaned = raw.trim()
+                .replace("\r", "")
+                .replace("\n", "")
             if (cleaned == lastHandled) return@launch
             val parsed = SwitchTransfer.parseQr(cleaned)
             when {
@@ -120,7 +120,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                             lastHandled = ""
                             _state.update {
                                 it.copy(
-                                    status = "QR形式が不明です。\n${cleaned.take(100)}",
+                                    status = "QR形式が不明です。\n" + cleaned.take(100),
                                     phase = "wait_wifi"
                                 )
                             }
