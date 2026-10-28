@@ -221,9 +221,14 @@ object SwitchTransfer {
             val names = extractFileNames(json!!)
             Log.i(TAG, "FileNames=$names")
             for (name in names) {
-                val bytes = httpGetBytes(ROOT + "img/" + name) ?: continue
-                if (bytes.size < 64) continue
-                saved += GalleryStore.saveBytes(context, bytes, name)
+                val url = ROOT + "img/" + name
+                val item = httpSaveToGallery(context, url, name)
+                if (item != null) {
+                    saved += item
+                    Log.i(TAG, "saved ${item.name} ${item.sizeBytes} bytes")
+                } else {
+                    Log.w(TAG, "failed $url")
+                }
             }
             if (saved.isNotEmpty()) return@withContext saved
         }
@@ -233,14 +238,11 @@ object SwitchTransfer {
             ?: httpGetString(baseUrl)
         if (!html.isNullOrBlank()) {
             for (name in extractFileNames(html)) {
-                val bytes = httpGetBytes(ROOT + "img/" + name) ?: continue
-                if (bytes.size >= 64) saved += GalleryStore.saveBytes(context, bytes, name)
+                httpSaveToGallery(context, ROOT + "img/" + name, name)?.let { saved += it }
             }
             for (link in extractMediaLinks(html, ROOT)) {
-                val bytes = httpGetBytes(link) ?: continue
-                if (bytes.size < 64) continue
                 val name = link.substringAfterLast('/').substringBefore('?').ifBlank { null }
-                saved += GalleryStore.saveBytes(context, bytes, name)
+                httpSaveToGallery(context, link, name)?.let { saved += it }
             }
         }
         saved
@@ -293,6 +295,31 @@ object SwitchTransfer {
             }
         }
         return out.toList()
+    }
+
+    private fun httpSaveToGallery(context: Context, url: String, suggestedName: String?): GalleryItem? {
+        return try {
+            val c = openConn(url)
+            val code = c.responseCode
+            if (code !in 200..299) {
+                Log.w(TAG, "save $url code=$code")
+                return null
+            }
+            val len = c.contentLengthLong
+            c.inputStream.use { input ->
+                GalleryStore.saveFromStream(context, input, suggestedName, len)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "save $url: ${e.message}")
+            // フォールバック: 全読み込み
+            try {
+                val bytes = httpGetBytes(url) ?: return null
+                GalleryStore.saveBytes(context, bytes, suggestedName)
+            } catch (e2: Exception) {
+                Log.w(TAG, "save fallback $url: ${e2.message}")
+                null
+            }
+        }
     }
 
     private fun openConn(url: String): HttpURLConnection {
