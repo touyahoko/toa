@@ -90,23 +90,40 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(status = "QR未検出。角度や明るさを変えてください。") }
             return
         }
-        // 同一文字列の連打を無視
-        if (raw == lastHandled) return
-        lastHandled = raw
-
         viewModelScope.launch {
-            val parsed = SwitchTransfer.parseQr(raw)
+            val cleaned = raw.trim().replace("\r", "").replace("\n", "")
+", "").replace("
+", "")
+            if (cleaned == lastHandled) return@launch
+            val parsed = SwitchTransfer.parseQr(cleaned)
             when {
-                parsed.wifi != null -> handleWifi(parsed.wifi)
-                parsed.url != null -> handleUrl(parsed.url)
+                parsed.wifi != null -> {
+                    lastHandled = cleaned
+                    handleWifi(parsed.wifi)
+                }
+                parsed.url != null -> {
+                    lastHandled = cleaned
+                    handleUrl(parsed.url)
+                }
                 else -> {
-                    // 生テキストに WIFI: や http が埋もれている場合
-                    val again = SwitchTransfer.parseQr(raw.replace("\n", "").replace(" ", ""))
+                    val again = SwitchTransfer.parseQr(cleaned.replace(" ", ""))
                     when {
-                        again.wifi != null -> handleWifi(again.wifi)
-                        again.url != null -> handleUrl(again.url)
-                        else -> _state.update {
-                            it.copy(status = "QR形式が不明です（Wi-FiまたはURL用）。\n${raw.take(80)}")
+                        again.wifi != null -> {
+                            lastHandled = cleaned
+                            handleWifi(again.wifi)
+                        }
+                        again.url != null -> {
+                            lastHandled = cleaned
+                            handleUrl(again.url)
+                        }
+                        else -> {
+                            lastHandled = ""
+                            _state.update {
+                                it.copy(
+                                    status = "QR形式が不明です。\n${cleaned.take(100)}",
+                                    phase = "wait_wifi"
+                                )
+                            }
                         }
                     }
                 }

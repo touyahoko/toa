@@ -1,5 +1,7 @@
 package org.mhxxtools.mhxxrngtool.ui.settings
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -30,15 +32,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * ライブカメラで QR を連続検出。検出ごとに [onQr] を呼ぶ（重複は短時間抑制）。
+ * ライブカメラで QR を連続検出。検出ごとに [onQr]（メインスレッド）。
  */
 @Composable
 fun LiveQrScanner(
@@ -49,16 +51,20 @@ fun LiveQrScanner(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     val executor = remember { Executors.newSingleThreadExecutor() }
-    val scanner = remember { BarcodeScanning.getClient() }
-    val busy = remember { AtomicBoolean(false) }
-    val lastValue = remember { AtomicLong(0) }
-    val lastText = remember { java.util.concurrent.atomic.AtomicReference("") }
+    val scanner = remember {
+        val opts = BarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build()
+        BarcodeScanning.getClient(opts)
+    }
+    val lastEmitted = remember { AtomicReference("" to 0L) }
 
     DisposableEffect(Unit) {
         onDispose {
-            executor.shutdown()
-            scanner.close()
+            try { executor.shutdown() } catch (_: Exception) {}
+            try { scanner.close() } catch (_: Exception) {}
         }
     }
 
@@ -71,58 +77,46 @@ fun LiveQrScanner(
                 }
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                 cameraProviderFuture.addListener({
-                    val provider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also { p ->
-                        p.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-                    @Suppress("DEPRECATION")
-                    val analysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setTargetResolution(Size(1280, 720))
-                        .build()
-                    analysis.setAnalyzer(executor) { imageProxy ->
-                        try {
-                            val media = imageProxy.image
-                            if (media != null && !busy.get()) {
-                                val image = InputImage.fromMediaImage(
-                                    media,
-                                    imageProxy.imageInfo.rotationDegrees
-                                )
-                                scanner.process(image)
-                                    .addOnSuccessListener { codes ->
-                                        val raw = codes
-                                            .asSequence()
-                                            .filter {
-                                                it.format == Barcode.FORMAT_QR_CODE ||
-                                                    it.format == Barcode.FORMAT_ALL_FORMATS ||
-                                                    it.rawValue != null
-                                            }
-                                            .mapNotNull { it.rawValue }
-                                            .firstOrNull { it.isNotBlank() }
-                                        if (raw != null) {
-                                            val now = System.currentTimeMillis()
-                                            val same = raw == lastText.get() && now - lastValue.get() < 2500
-                                            if (!same && busy.compareAndSet(false, true)) {
-                                                lastText.set(raw)
-                                                lastValue.set(now)
-                                                onQr(raw)
-                                                // 次のQR（2つ目）を読めるよう少し後に解除
-                                                executor.execute {
-                                                    try { Thread.sleep(1200) } catch (_: Exception) {}
-                                                    busy.set(false)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    .addOnCompleteListener { imageProxy.close() }
-                            } else {
-                                imageProxy.close()
-                            }
-                        } catch (_: Exception) {
-                            imageProxy.close()
-                        }
-                    }
                     try {
+                        val provider = cameraProviderFuture.get()
+                        val preview = Preview.Builder().build().also { p ->
+                            p.setSurfaceProvider(previewView.surfaceProvider)
+                        }
+                        @Suppress("DEPRECATION")
+                        val analysis = ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .setTargetResolution(Size(1920, 1080))
+                            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                            .build()
+
+                        analysis.setAnalyzer(executor) { imageProxy ->
+                            val mediaImage = imageProxy.image
+                            if (mediaImage == null) {
+                                imageProxy.close()
+                                return@setAnalyzer
+                            }
+                            val image = InputImage.fromMediaImage(
+                                mediaImage,
+                                imageProxy.imageInfo.rotationDegrees
+                            )
+                            scanner.process(image)
+                                .addOnSuccessListener { codes ->
+                                    val raw = codes
+                                        .asSequence()
+                                        .mapNotNull { it.rawValue?.trim() }
+                                        .firstOrNull { it.isNotEmpty() }
+                                        ?: return@addOnSuccessListener
+                                    val now = System.currentTimeMillis()
+                                    val (prev, t0) = lastEmitted.get()
+                                    // 同じ内容は 2 秒以内は無視。違う内容は即通知
+                                    if (raw == prev && now - t0 < 2000L) return@addOnSuccessListener
+                                    lastEmitted.set(raw to now)
+                                    mainHandler.post { onQr(raw) }
+                                }
+                                .addOnFailureListener { /* ignore frame errors */ }
+                                .addOnCompleteListener { imageProxy.close() }
+                        }
+
                         provider.unbindAll()
                         provider.bindToLifecycle(
                             lifecycleOwner,
@@ -130,18 +124,19 @@ fun LiveQrScanner(
                             preview,
                             analysis
                         )
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                        // camera bind fail
+                    }
                 }, ContextCompat.getMainExecutor(ctx))
                 previewView
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // ガイド枠
         Box(
             Modifier
                 .align(Alignment.Center)
-                .size(240.dp)
+                .size(260.dp)
                 .border(3.dp, Color(0xFF348FF9), RoundedCornerShape(16.dp))
         )
 
@@ -153,12 +148,23 @@ fun LiveQrScanner(
                 .padding(16.dp)
         ) {
             Text(
-                "QRを枠に合わせてください",
+                "QRを枠に合わせてください（自動読取）",
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
             )
-            Text(hint, color = Color(0xFF9DA5B1), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            Text(
+                hint,
+                color = Color(0xFF9DA5B1),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                "画面のQR全体が枠に入るように近づけると読みやすくなります",
+                color = Color(0xFF9DA5B1),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
 
         TextButton(
