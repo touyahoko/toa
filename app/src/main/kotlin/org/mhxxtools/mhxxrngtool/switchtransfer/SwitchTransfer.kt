@@ -20,17 +20,14 @@ import kotlin.coroutines.resume
 /**
  * Switch「スマートフォンへ送る」対応。
  *
- * 1つ目のQR: WIFI:T:WPA;S:switch_xxx;P:password;;
+ * 1つ目のQR: WIFI:S:switch_xxx;T:WPA;P:password;; （キー順は任意）
  * 2つ目のQR: http://192.168.0.1/… または index URL
  * 接続後: http://192.168.0.1/ から画像・動画を取得して GalleryStore に保存
  */
 object SwitchTransfer {
     private const val TAG = "SwitchTransfer"
-    private val WIFI_RE = Pattern.compile(
-        "WIFI:T:([^;]*);S:([^;]*);P:([^;]*);;",
-        Pattern.CASE_INSENSITIVE
-    )
     private val URL_RE = Pattern.compile("https?://[^\\s\"'<>]+", Pattern.CASE_INSENSITIVE)
+    private val WIFI_KV = Pattern.compile("([STP]):([^;]*)", Pattern.CASE_INSENSITIVE)
 
     data class WifiInfo(val ssid: String, val password: String, val type: String)
     data class ParseResult(
@@ -39,22 +36,50 @@ object SwitchTransfer {
         val raw: String
     )
 
+    /**
+     * Switch 実機例: WIFI:S:switch_xxx;T:WPA;P:password;;
+     * 一般形:      WIFI:T:WPA;S:ssid;P:password;;
+     * キー順は問わない。
+     */
     fun parseQr(raw: String): ParseResult {
-        val text = raw.trim()
-        val wm = WIFI_RE.matcher(text)
-        if (wm.find()) {
-            return ParseResult(
-                wifi = WifiInfo(wm.group(2) ?: "", wm.group(3) ?: "", wm.group(1) ?: "WPA"),
-                raw = text
-            )
+        val text = raw.trim().replace("\r", "").replace("\n", "")
+        val upper = text.uppercase()
+        if (upper.startsWith("WIFI:")) {
+            var ssid = ""
+            var pass = ""
+            var type = "WPA"
+            val body = text.substring(5)
+            val m = WIFI_KV.matcher(body)
+            while (m.find()) {
+                val k = (m.group(1) ?: "").uppercase()
+                val v = m.group(2) ?: ""
+                when (k) {
+                    "S" -> ssid = v
+                    "P" -> pass = v
+                    "T" -> type = v.ifBlank { "WPA" }
+                }
+            }
+            // フォールバック: セミコロン分割
+            if (ssid.isEmpty()) {
+                body.split(';').forEach { part ->
+                    val p = part.trim()
+                    when {
+                        p.startsWith("S:", true) -> ssid = p.substring(2)
+                        p.startsWith("P:", true) -> pass = p.substring(2)
+                        p.startsWith("T:", true) -> type = p.substring(2).ifBlank { "WPA" }
+                    }
+                }
+            }
+            if (ssid.isNotEmpty()) {
+                return ParseResult(wifi = WifiInfo(ssid, pass, type), raw = text)
+            }
         }
         val um = URL_RE.matcher(text)
         if (um.find()) {
             return ParseResult(url = um.group(), raw = text)
         }
-        // 裸のホスト
-        if (text.contains("192.168.0.1") || text.startsWith("http")) {
-            val u = if (text.startsWith("http")) text else "http://$text"
+        if (text.contains("192.168.0.1") || text.startsWith("http", ignoreCase = true)) {
+            val u = if (text.startsWith("http", ignoreCase = true)) text else "http://$text"
             return ParseResult(url = u, raw = text)
         }
         return ParseResult(raw = text)
