@@ -318,6 +318,15 @@ fun OcrScreen(
                                     s.detectedSkill2 else "なし"
                             )
                             ResultField("スロット", s.detectedSlot.ifEmpty { "不明" })
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = { vm.reset() },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = HtmlColors.Muted),
+                                border = BorderStroke(1.dp, HtmlColors.Border)
+                            ) {
+                                Text("リセット（画像・結果をクリア）")
+                            }
                         }
                     }
                 }
@@ -360,17 +369,25 @@ fun OcrScreen(
         // ── 結果 ──
         if (!s.isSearching && s.frameResults.isNotEmpty()) {
             item {
-                Text(
-                    "検索結果 ${s.totalFound} 件",
-                    fontWeight = FontWeight.SemiBold,
-                    color = HtmlColors.Text
-                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "検索結果 ${s.totalFound} 件",
+                        fontWeight = FontWeight.SemiBold,
+                        color = HtmlColors.Text
+                    )
+                    TextButton(onClick = { vm.reset() }) {
+                        Text("リセット", color = HtmlColors.Muted)
+                    }
+                }
             }
             itemsIndexed(s.frameResults) { index, result ->
                 Card(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { onFrameTap(result.frame) },
+                    onClick = { onFrameTap(result.frame) },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = cardShape,
                     colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface),
                     border = BorderStroke(1.dp, HtmlColors.Border)

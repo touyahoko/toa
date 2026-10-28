@@ -283,4 +283,11 @@ class OcrViewModel : ViewModel() {
     }
 
     fun clearAutoApply() = _state.update { it.copy(autoApplyReady = null) }
+
+    /** 鑑定結果・画像・検索をすべてクリア */
+    fun reset() {
+        searchJob?.cancel()
+        searchJob = null
+        _state.value = OcrUiState()
+    }
 }

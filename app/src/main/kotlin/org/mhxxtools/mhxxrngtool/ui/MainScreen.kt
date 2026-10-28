@@ -164,6 +164,10 @@ fun MainScreen(appState: AppStateViewModel) {
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
                         timerVm.setTargetFrame(frame)
+                        if (timerVm.state.value.currentPosFrame < 0L) {
+                            timerVm.setCurrentPosFrame(0L)
+                            timerVm.setTargetFrame(frame)
+                        }
                         selectedTab = 6
                     }
                 )
@@ -190,7 +194,12 @@ fun MainScreen(appState: AppStateViewModel) {
                         selectedTab = 0
                     },
                     onFrameTap = { frame ->
+                        // 目標フレームをセットし、現在地未設定なら0として残りを計算してタイマーへ
                         timerVm.setTargetFrame(frame)
+                        if (timerVm.state.value.currentPosFrame < 0L) {
+                            timerVm.setCurrentPosFrame(0L)
+                            timerVm.setTargetFrame(frame)
+                        }
                         selectedTab = 6
                     }
                 )
