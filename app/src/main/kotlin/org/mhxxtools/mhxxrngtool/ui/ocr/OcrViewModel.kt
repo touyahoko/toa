@@ -74,7 +74,7 @@ class OcrViewModel : ViewModel() {
             val bmp = AndroidOcr.loadBitmap(context, uri).getOrElse { e ->
                 setError("画像読込エラー: ${e.message}"); return@launch
             }
-            val hybrid = HybridCharmReader.read(context, bmp)
+            val hybrid = HybridCharmReader.read(context, bmp, preferredKind = -1) // 画像から種類自動判定
             bmp.recycle()
             val r = hybrid.getOrElse { e ->
                 setError("認識エラー: ${e.message}"); return@launch
@@ -95,8 +95,8 @@ class OcrViewModel : ViewModel() {
             val skill2 = charm.skills.getOrNull(1)
 
             val kindNames = listOf("風化したお守り", "古びたお守り", "光るお守り", "なぞのお守り")
+            // Hybrid が画像から種類を自動判定済み。なければスキルから推論
             val inferred = when {
-                userKind in 0..3 -> userKind
                 charm.kind >= 0 -> charm.kind
                 else -> inferKindFromSkills(charm)
             }
