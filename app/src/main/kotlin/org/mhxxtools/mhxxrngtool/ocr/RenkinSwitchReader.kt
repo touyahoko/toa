@@ -110,8 +110,9 @@ object RenkinSwitchReader {
             val (s1Id, s1Sc) = matchSkill(name1)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
-            var s2Id = if (skill2Empty) null else matchSkill(name2).first
-            var s2Sc = if (skill2Empty) 1.0 else matchSkill(name2).second
+            val s2Match = if (skill2Empty) null to 1.0 else matchSkill(name2)
+            var s2Id: Int? = s2Match.first
+            var s2Sc: Double = s2Match.second
             // 重撃弾強化(50) ↔ 強撃瓶追加(59) 取り違え対策
             if (!skill2Empty && s2Id == 50) {
                 val forced = matchSkillForceId(name2, 59)
@@ -119,6 +120,13 @@ object RenkinSwitchReader {
                 if (forced != null && (forced >= 0.20 || forced >= s2Sc - 0.15)) {
                     s2Id = 59
                     s2Sc = forced
+                } else {
+                    // 強制: 50と判定された場合でも 59 テンプレがあれば優先
+                    // （強撃瓶追加は 重撃弾強化 と字形が酷似するため）
+                    if (skillTmpls.any { it.id == 59 }) {
+                        s2Id = 59
+                        Log.i(TAG, "force59 hard override from 50")
+                    }
                 }
             }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
@@ -239,6 +247,35 @@ object RenkinSwitchReader {
         Imgproc.warpAffine(src, out, m, Size(src.cols().toDouble(), src.rows().toDouble()))
         m.release()
         return out
+    }
+
+
+    /** 指定IDの見本だけを照合（取り違え再判定用） */
+    private fun matchSkillForceId(roiTh: Mat, skillId: Int): Double? {
+        val tmpl = skillTmpls.firstOrNull { it.id == skillId } ?: return null
+        var best = -1.0
+        for (sc in doubleArrayOf(0.90, 0.95, 0.98, 1.0, 1.02, 1.05, 1.10, 1.15)) {
+            var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
+            var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
+            if (th > roiTh.rows() || tw > roiTh.cols()) {
+                val fit = minOf(
+                    roiTh.rows().toDouble() / tmpl.mat.rows().toDouble(),
+                    roiTh.cols().toDouble() / tmpl.mat.cols().toDouble()
+                ) * 0.98
+                if (fit < 0.4) continue
+                tw = (tmpl.mat.cols() * fit).toInt().coerceAtLeast(1)
+                th = (tmpl.mat.rows() * fit).toInt().coerceAtLeast(1)
+            }
+            if (th > roiTh.rows() || tw > roiTh.cols()) continue
+            val scaled = Mat()
+            Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
+            val pair = matchNcc(roiTh, scaled)
+            scaled.release()
+            if (pair != null && pair.first > best) {
+                best = pair.first
+            }
+        }
+        return if (best < 0.0) null else best
     }
 
     private fun matchSkill(roiTh: Mat): Pair<Int?, Double> {
