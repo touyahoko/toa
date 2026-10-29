@@ -110,7 +110,17 @@ object RenkinSwitchReader {
             val (s1Id, s1Sc) = matchSkill(name1)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
-            val (s2Id, s2Sc) = if (skill2Empty) null to 1.0 else matchSkill(name2)
+            var s2Id = if (skill2Empty) null else matchSkill(name2).first
+            var s2Sc = if (skill2Empty) 1.0 else matchSkill(name2).second
+            // 重撃弾強化(50) ↔ 強撃瓶追加(59) 取り違え対策
+            if (!skill2Empty && s2Id == 50) {
+                val forced = matchSkillForceId(name2, 59)
+                Log.i(TAG, "force59 vs50: forced=$forced s2Sc=$s2Sc")
+                if (forced != null && (forced >= 0.20 || forced >= s2Sc - 0.15)) {
+                    s2Id = 59
+                    s2Sc = forced
+                }
+            }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
             val (slots, slotNote) = matchSlots(mx)
 
@@ -288,12 +298,10 @@ object RenkinSwitchReader {
             val c50 = ranked.firstOrNull { it.id == 50 }
             val c59 = ranked.firstOrNull { it.id == 59 }
             if (c50 != null && c59 != null) {
-                // 「瓶追加」は「弾強化」より文字幅が近い or スコアが -0.35 以内なら 59
-                if (c59.score >= c50.score - 0.35) {
-                    best = c59
-                }
+                // 両候補がある場合は強撃瓶追加(59)を優先（字形が酷似するため）
+                best = c59
             } else if (best.id == 50 && c59 != null) {
-                if (c59.score >= best.score - 0.40) best = c59
+                best = c59
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
