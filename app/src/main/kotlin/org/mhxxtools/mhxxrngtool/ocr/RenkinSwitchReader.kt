@@ -9,6 +9,7 @@ import android.graphics.Rect
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
 import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
 import org.opencv.core.Core
 import org.opencv.core.Mat
@@ -63,7 +64,8 @@ object RenkinSwitchReader {
         return abs(bmp.width.toFloat() / bmp.height - 16f / 9f) < 0.06f
     }
 
-    suspend fun read(context: Context, bitmap: Bitmap): Result? = withContext(Dispatchers.Default) {
+    /** @param preferredKind 0=風化..3=なぞ / -1=全スキル候補 */
+    suspend fun read(context: Context, bitmap: Bitmap, preferredKind: Int = -1): Result? = withContext(Dispatchers.Default) {
         if (!OpenCvBridge.ensureInit()) {
             return@withContext Result(OcrCharm(-1, -1, emptyList()), "OpenCV未初期化", 0f)
         }
@@ -107,25 +109,24 @@ object RenkinSwitchReader {
             val name2 = tophatRegion(mx, NAME2)
             val pts2 = tophatRegion(mx, PTS2)
 
-            val (s1Id, s1Sc) = matchSkill(name1)
+            val (s1Id, s1Sc) = matchSkill(name1, preferredKind)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
-            val s2Match = if (skill2Empty) null to 1.0 else matchSkill(name2)
+            val s2Match = if (skill2Empty) null to 1.0 else matchSkill(name2, preferredKind)
             var s2Id: Int? = s2Match.first
             var s2Sc: Double = s2Match.second
             // 重撃弾強化(50) ↔ 強撃瓶追加(59) 取り違え対策
-            if (!skill2Empty && s2Id == 50) {
-                val forced = matchSkillForceId(name2, 59)
-                Log.i(TAG, "force59 vs50: forced=$forced s2Sc=$s2Sc")
-                if (forced != null && (forced >= 0.20 || forced >= s2Sc - 0.15)) {
-                    s2Id = 59
-                    s2Sc = forced
-                } else {
-                    // 強制: 50と判定された場合でも 59 テンプレがあれば優先
-                    // （強撃瓶追加は 重撃弾強化 と字形が酷似するため）
-                    if (skillTmpls.any { it.id == 59 }) {
-                        s2Id = 59
-                        Log.i(TAG, "force59 hard override from 50")
+            // 種類テーブル外のIDは後段 Hybrid で補正。ここでは候補を種類で絞っている。
+            if (!skill2Empty && s2Id != null && preferredKind in 0..3) {
+                val tbl = KIND_TABLES[preferredKind]
+                val allowed = if (tbl != null) tbl.skill1.toSet() + tbl.skill2.toSet() else emptySet()
+                if (s2Id !in allowed) {
+                    // 種類内で再照合
+                    val re = matchSkill(name2, preferredKind)
+                    if (re.first != null) {
+                        s2Id = re.first
+                        s2Sc = re.second
+                        Log.i(TAG, "re-match skill2 within kind=$preferredKind -> $s2Id")
                     }
                 }
             }
@@ -137,12 +138,10 @@ object RenkinSwitchReader {
 
             val skills = mutableListOf<OcrSkill>()
             if (s1Id != null && s1Sc >= SKILL_MIN) {
-                val id1 = if (s1Id == 50) 59 else s1Id
-                skills += OcrSkill(id1, SKILL_NAMES.getOrElse(id1) { "s$id1" }, (p1 ?: 0).coerceIn(0, 20))
+                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, (p1 ?: 0).coerceIn(0, 20))
             }
             if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                val id2 = if (s2Id == 50) 59 else s2Id
-                skills += OcrSkill(id2, SKILL_NAMES.getOrElse(id2) { "s$id2" }, (p2 ?: 0).coerceIn(0, 20))
+                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
             }
 
             if (skills.isEmpty()) {
@@ -280,13 +279,18 @@ object RenkinSwitchReader {
         return if (best < 0.0) null else best
     }
 
-    private fun matchSkill(roiTh: Mat): Pair<Int?, Double> {
+    private fun matchSkill(roiTh: Mat, preferredKind: Int = -1): Pair<Int?, Double> {
         // 錬金リーダーと同じ: NCC + 余りインク減点。公式・追加スキルを同一条件で照合。
         data class Cand(val id: Int, val score: Double, val x: Int, val width: Int)
         val cands = mutableListOf<Cand>()
         val preferLeft = NAME_LEFT - NAME1[0] - NAME_SEARCH
         val preferRight = NAME_LEFT - NAME1[0] + NAME_SEARCH
+        val allowedIds: Set<Int>? = if (preferredKind in 0..3) {
+            val tbl = KIND_TABLES[preferredKind]
+            if (tbl != null) (tbl.skill1.toSet() + tbl.skill2.toSet()) else null
+        } else null
         for (tmpl in skillTmpls) {
+            if (allowedIds != null && tmpl.id !in allowedIds) continue
             for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
