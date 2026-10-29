@@ -47,7 +47,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.28
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 0.85
+    private const val LEFTOVER = 1.05
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -274,16 +274,27 @@ object RenkinSwitchReader {
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
         var best = ranked[0]
         if (ranked.size > 1) {
-            val top = ranked.take(12)
+            val top = ranked.take(16)
+            // スコア主、幅で長いスキル名をわずかに優先（強撃瓶追加 vs 重撃弾強化 など）
             best = top.maxBy { c ->
-                // スコアを主、同程度なら幅（長いスキル名）を優先
-                c.score * 100.0 + c.width * 0.02
+                c.score * 100.0 + c.width * 0.08
             }
-            // 1位が短い見本で2位が十分近い＆幅が広いなら2位を採用
             val a = top[0]
-            val longer = top.filter { it.width >= a.width + 8 && it.score >= a.score - 0.15 }
-            if (longer.isNotEmpty() && a.width < 70) {
-                best = longer.maxBy { it.score * 100.0 + it.width * 0.02 }
+            // 短い見本が勝っていても、幅が広くスコアが近い候補を優先
+            val longer = top.filter { it.width >= a.width + 6 && it.score >= a.score - 0.22 }
+            if (longer.isNotEmpty()) {
+                best = longer.maxBy { it.score * 100.0 + it.width * 0.08 }
+            }
+            // 既知の取り違え: 重撃弾強化(50) ↔ 強撃瓶追加(59)
+            val has50 = top.any { it.id == 50 }
+            val has59 = top.any { it.id == 59 }
+            if (has50 && has59) {
+                val c50 = top.first { it.id == 50 }
+                val c59 = top.first { it.id == 59 }
+                // 59の方が幅が広い／スコアが近ければ 59 を採用
+                if (c59.width >= c50.width - 4 && c59.score >= c50.score - 0.25) {
+                    best = c59
+                }
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
