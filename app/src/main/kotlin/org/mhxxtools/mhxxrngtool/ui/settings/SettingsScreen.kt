@@ -52,7 +52,8 @@ import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 fun SettingsScreen(
     galleryVm: GalleryViewModel,
     onClose: () -> Unit = {},
-    onUseImage: (Uri) -> Unit = {}
+    onUseImage: (Uri) -> Unit = {},
+    onUseVideo: (Uri) -> Unit = {}
 ) {
     val s by galleryVm.state.collectAsState()
     val context = LocalContext.current
