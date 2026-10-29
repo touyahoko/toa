@@ -200,29 +200,11 @@ fun SettingsScreen(
                                     SavedTile(
                                         item = item,
                                         onUse = {
+                                            val uri = Uri.fromFile(item.file)
                                             if (item.kind == GalleryKind.IMAGE) {
-                                                onUseImage(Uri.fromFile(item.file))
+                                                onUseImage(uri)
                                             } else {
-                                                try {
-                                                    val uri = androidx.core.content.FileProvider.getUriForFile(
-                                                        context,
-                                                        context.packageName + ".provider",
-                                                        item.file
-                                                    )
-                                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                                        setDataAndType(uri, "video/*")
-                                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                                    }
-                                                    context.startActivity(intent)
-                                                } catch (_: Exception) {
-                                                    try {
-                                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                                            setDataAndType(Uri.fromFile(item.file), "video/mp4")
-                                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                                        }
-                                                        context.startActivity(intent)
-                                                    } catch (_: Exception) {}
-                                                }
+                                                onUseVideo(uri)
                                             }
                                         },
                                         onDelete = { galleryVm.delete(item.id) }
@@ -283,7 +265,36 @@ private fun SavedTile(item: GalleryItem, onUse: () -> Unit, onDelete: () -> Unit
                         )
                     }
                 } else {
-                    Text("動画", color = HtmlColors.Accent, fontWeight = FontWeight.Bold)
+                    val thumb = remember(item.id) {
+                        runCatching {
+                            val r = android.media.MediaMetadataRetriever()
+                            r.setDataSource(item.file.absolutePath)
+                            val b = r.getFrameAtTime(0)
+                            r.release()
+                            b
+                        }.getOrNull()
+                    }
+                    if (thumb != null) {
+                        Image(
+                            thumb.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                        Text(
+                            "▶ 動画",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(6.dp)
+                                .background(Color(0x99000000), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    } else {
+                        Text("▶ 動画", color = HtmlColors.Accent, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
             Text(
@@ -295,7 +306,7 @@ private fun SavedTile(item: GalleryItem, onUse: () -> Unit, onDelete: () -> Unit
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = onUse) {
                     Text(
-                        if (item.kind == GalleryKind.VIDEO) "開く" else "鑑定へ",
+                        if (item.kind == GalleryKind.VIDEO) "調合へ" else "鑑定へ",
                         fontSize = 11.sp,
                         color = HtmlColors.Accent
                     )
