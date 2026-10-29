@@ -188,6 +188,18 @@ class ComboViewModel(app: Application) : AndroidViewModel(app) {
 
     // ── 動画解析 ─────────────────────────────────────────────────────────
 
+    /** ギャラリー等から動画を読み込み → 解析 → 自動検索 */
+    fun importVideoAndRun(uri: Uri) {
+        setVideoUri(uri)
+        viewModelScope.launch {
+            // 総フレーム取得待ち
+            delay(400)
+            if (_state.value.videoUri != null && analyzeJob?.isActive != true) {
+                startAnalysis()
+            }
+        }
+    }
+
     fun setVideoUri(uri: Uri) {
         _state.update {
             it.copy(videoUri = uri, videoName = "…", analyzeMsg = "", detectedNumbers = emptyList(), craftSummary = "")

@@ -28,6 +28,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.VideoView
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
 
 @Composable
 fun ComboScreen(
@@ -174,6 +179,42 @@ fun ComboScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+
+                        // ── 読み込み動画プレビュー ─────────────────────────
+                        if (s.videoUri != null) {
+                            val uri = s.videoUri
+                            AndroidView(
+                                factory = { ctx ->
+                                    VideoView(ctx).apply {
+                                        setVideoURI(uri)
+                                        setOnPreparedListener { mp ->
+                                            mp.isLooping = true
+                                            // 音声はミュート（解析用）
+                                            try { mp.setVolume(0f, 0f) } catch (_: Exception) {}
+                                            start()
+                                        }
+                                        setOnErrorListener { _, _, _ -> true }
+                                    }
+                                },
+                                update = { vv ->
+                                    // URIが変わったら差し替え
+                                    try {
+                                        vv.stopPlayback()
+                                        vv.setVideoURI(uri)
+                                        vv.start()
+                                    } catch (_: Exception) {}
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(16f / 9f)
+                            )
+                            Text(
+                                "再生中: ${s.videoName}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+
 
                         // ── フレーム範囲・FPS・ステップ ───────────────────
                         Text(
