@@ -47,7 +47,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.28
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.05
+    private const val LEFTOVER = 1.15
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -274,27 +274,26 @@ object RenkinSwitchReader {
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
         var best = ranked[0]
         if (ranked.size > 1) {
-            val top = ranked.take(16)
-            // スコア主、幅で長いスキル名をわずかに優先（強撃瓶追加 vs 重撃弾強化 など）
-            best = top.maxBy { c ->
-                c.score * 100.0 + c.width * 0.08
-            }
+            val top = ranked.take(20)
+            best = top.maxBy { c -> c.score * 100.0 + c.width * 0.12 }
             val a = top[0]
-            // 短い見本が勝っていても、幅が広くスコアが近い候補を優先
-            val longer = top.filter { it.width >= a.width + 6 && it.score >= a.score - 0.22 }
+            val longer = top.filter { it.width >= a.width + 4 && it.score >= a.score - 0.28 }
             if (longer.isNotEmpty()) {
-                best = longer.maxBy { it.score * 100.0 + it.width * 0.08 }
+                best = longer.maxBy { it.score * 100.0 + it.width * 0.12 }
             }
-            // 既知の取り違え: 重撃弾強化(50) ↔ 強撃瓶追加(59)
-            val has50 = top.any { it.id == 50 }
-            val has59 = top.any { it.id == 59 }
-            if (has50 && has59) {
-                val c50 = top.first { it.id == 50 }
-                val c59 = top.first { it.id == 59 }
-                // 59の方が幅が広い／スコアが近ければ 59 を採用
-                if (c59.width >= c50.width - 4 && c59.score >= c50.score - 0.25) {
+        }
+        // 既知の取り違え: 重撃弾強化(50) vs 強撃瓶追加(59)
+        // 50 が勝っていても 59 が候補にいれば、幅とスコア余裕で 59 を優先
+        run {
+            val c50 = ranked.firstOrNull { it.id == 50 }
+            val c59 = ranked.firstOrNull { it.id == 59 }
+            if (c50 != null && c59 != null) {
+                // 「瓶追加」は「弾強化」より文字幅が近い or スコアが -0.35 以内なら 59
+                if (c59.score >= c50.score - 0.35) {
                     best = c59
                 }
+            } else if (best.id == 50 && c59 != null) {
+                if (c59.score >= best.score - 0.40) best = c59
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
