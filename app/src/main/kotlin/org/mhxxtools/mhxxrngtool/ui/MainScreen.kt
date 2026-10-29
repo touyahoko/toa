@@ -221,6 +221,11 @@ fun MainScreen(appState: AppStateViewModel) {
                             showSettings = false
                             ocrVm.recognizeFromUri(context, uri, appState.kind)
                             selectedTab = 5
+                        },
+                        onUseVideo = { uri ->
+                            showSettings = false
+                            selectedTab = 2 // 調合
+                            comboVm.importVideoAndRun(uri)
                         }
                     )
                 }
