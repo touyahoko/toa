@@ -187,5 +187,59 @@ fun TimerScreen(vm: TimerViewModel, modifier: Modifier = Modifier) {
                 }
             }
         }
+
+        // ── ストップウォッチ（HTML こめこ版と同じ仕様） ──────────────
+        Card(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = HtmlColors.Surface),
+            border = BorderStroke(1.dp, HtmlColors.Border)
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("⏱ ストップウォッチ", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(
+                    s.swDisplay,
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    color = HtmlColors.Muted
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(s.swAutoFillEarly, onCheckedChange = vm::setSwAutoFillEarly)
+                    Text("停止時に早め終了へ自動入力", fontSize = 12.sp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!s.swRunning) {
+                        Button(
+                            onClick = { vm.startStopwatch() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = HtmlColors.Accent,
+                                contentColor = androidx.compose.ui.graphics.Color.White
+                            )
+                        ) { Text("スタート") }
+                    } else {
+                        Button(
+                            onClick = { vm.stopStopwatch() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        ) { Text("ストップ") }
+                        OutlinedButton(
+                            onClick = { vm.lapStopwatch() },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("ラップ") }
+                    }
+                    OutlinedButton(onClick = { vm.resetStopwatch() }) { Text("リセット") }
+                }
+                if (s.swLaps.isNotEmpty()) {
+                    Text("ラップ", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    s.swLaps.forEach { line ->
+                        Text(line, fontSize = 12.sp, color = HtmlColors.Muted)
+                    }
+                }
+            }
+        }
     }
 }

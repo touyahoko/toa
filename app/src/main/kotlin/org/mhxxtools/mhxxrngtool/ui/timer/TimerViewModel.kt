@@ -41,7 +41,12 @@ data class TimerUiState(
     val mashCount: Long = 0L,
     val remainderFrames: Long = 0L,
     val calcSummary: String = "①調合で現在地 → ②検索で目標お守り → 自動で残り計算",
-    val appliedModeLabel: String = ""
+    val appliedModeLabel: String = "",
+    // ストップウォッチ（HTML こめこ版と同等）
+    val swDisplay: String = "00:00.000",
+    val swRunning: Boolean = false,
+    val swLaps: List<String> = emptyList(),
+    val swAutoFillEarly: Boolean = false
 )
 
 class TimerViewModel(app: Application) : AndroidViewModel(app) {
@@ -50,7 +55,12 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var countdownJob: Job? = null
     private var metJob: Job? = null
+    private var swJob: Job? = null
     private var tone: ToneGenerator? = null
+
+    private var swStartMs: Long = 0L
+    private var swAccumMs: Long = 0L
+    private var swLapBaseMs: Long = 0L
 
     /** カウント開始時刻 (ms) — 停止時の経過からフレーム再計算に使う */
     private var countdownStartMs: Long = 0L
@@ -417,9 +427,83 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(metRunning = false, metCount = 0) }
     }
 
+    // ── ストップウォッチ（HTML formatTime / start / stop / lap / reset と同じ） ──
+
+    private fun formatSw(ms: Long): String {
+        val m = (ms / 60000).toInt()
+        val s = ((ms % 60000) / 1000).toInt()
+        val milli = (ms % 1000).toInt()
+        return "%02d:%02d.%03d".format(m, s, milli)
+    }
+
+    private fun currentSwElapsed(): Long {
+        return if (_state.value.swRunning) {
+            swAccumMs + (System.currentTimeMillis() - swStartMs)
+        } else swAccumMs
+    }
+
+    fun setSwAutoFillEarly(v: Boolean) = _state.update { it.copy(swAutoFillEarly = v) }
+
+    fun startStopwatch() {
+        if (_state.value.swRunning) return
+        swStartMs = System.currentTimeMillis()
+        _state.update { it.copy(swRunning = true) }
+        swJob?.cancel()
+        swJob = viewModelScope.launch {
+            while (isActive) {
+                delay(16)
+                val el = currentSwElapsed()
+                _state.update { it.copy(swDisplay = formatSw(el)) }
+            }
+        }
+    }
+
+    fun stopStopwatch() {
+        if (!_state.value.swRunning) return
+        swAccumMs += System.currentTimeMillis() - swStartMs
+        swJob?.cancel()
+        swJob = null
+        val el = swAccumMs
+        _state.update { it.copy(swRunning = false, swDisplay = formatSw(el)) }
+        // HTML: autoFillUpTime → 早め終了に反映
+        if (_state.value.swAutoFillEarly) {
+            val min = (el / 60000).toInt()
+            val sec = ((el % 60000) / 1000).toInt()
+            val milli = (el % 1000).toInt()
+            _state.update {
+                it.copy(
+                    earlyMin = min.toString(),
+                    earlySec = "%d.%03d".format(sec, milli)
+                )
+            }
+        }
+    }
+
+    fun lapStopwatch() {
+        if (!_state.value.swRunning) return
+        val total = currentSwElapsed()
+        val duration = total - swLapBaseMs
+        swLapBaseMs = total
+        val n = _state.value.swLaps.size + 1
+        val line = "Lap $n: ${formatSw(total)} (Duration: ${formatSw(duration)})"
+        _state.update { it.copy(swLaps = listOf(line) + it.swLaps) }
+    }
+
+    fun resetStopwatch() {
+        swJob?.cancel()
+        swJob = null
+        swStartMs = 0L
+        swAccumMs = 0L
+        swLapBaseMs = 0L
+        _state.update {
+            it.copy(swRunning = false, swDisplay = "00:00.000", swLaps = emptyList())
+        }
+    }
+
     override fun onCleared() {
         countdownJob?.cancel()
         metJob?.cancel()
+        swJob?.cancel()
         tone?.release()
         tone = null
         super.onCleared()
