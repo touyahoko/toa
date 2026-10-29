@@ -137,10 +137,12 @@ object RenkinSwitchReader {
 
             val skills = mutableListOf<OcrSkill>()
             if (s1Id != null && s1Sc >= SKILL_MIN) {
-                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, (p1 ?: 0).coerceIn(0, 20))
+                val id1 = if (s1Id == 50) 59 else s1Id
+                skills += OcrSkill(id1, SKILL_NAMES.getOrElse(id1) { "s$id1" }, (p1 ?: 0).coerceIn(0, 20))
             }
             if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
+                val id2 = if (s2Id == 50) 59 else s2Id
+                skills += OcrSkill(id2, SKILL_NAMES.getOrElse(id2) { "s$id2" }, (p2 ?: 0).coerceIn(0, 20))
             }
 
             if (skills.isEmpty()) {
