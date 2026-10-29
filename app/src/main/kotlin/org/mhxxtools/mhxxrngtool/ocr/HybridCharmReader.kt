@@ -150,22 +150,58 @@ object HybridCharmReader {
         return skillId in tbl.skill1 || skillId in tbl.skill2
     }
 
-    /** 種類テーブルに合うよう類似スキルを入れ替え */
+    /**
+     * 種類テーブルに合うよう類似スキルを入れ替え。
+     * 両方とも種類に出る場合は「出現種類が少ない＝より特有」な方を優先
+     * （例: 光るで特殊攻撃(32)と精密射撃(46)が両方有効 → 46を優先）
+     */
     private fun resolveConfusionsForKind(skills: List<OcrSkill>, kind: Int): List<OcrSkill> {
         return skills.map { s ->
-            if (skillInKind(s.globalIdx, kind)) return@map s
+            var bestId = s.globalIdx
+            var bestSpec = kindSpecificity(s.globalIdx) // 小さいほど特有
+
             for ((a, b) in CONFUSION_PAIRS) {
                 val alt = when (s.globalIdx) {
                     a -> b
                     b -> a
                     else -> continue
                 }
-                if (skillInKind(alt, kind)) {
-                    Log.i(TAG, "kind=$kind confusion ${s.globalIdx}→$alt")
-                    return@map OcrSkill(alt, SKILL_NAMES.getOrElse(alt) { s.name }, s.pts)
+                if (!skillInKind(alt, kind)) continue
+                val spec = kindSpecificity(alt)
+                // 現在のIDが種類外なら必ず入替
+                if (!skillInKind(s.globalIdx, kind)) {
+                    bestId = alt
+                    bestSpec = spec
+                    continue
+                }
+                // 両方有効: より特有（出現種類が少ない）方を採用
+                if (spec < bestSpec) {
+                    bestId = alt
+                    bestSpec = spec
+                }
+                // 同特有度なら長いスキル名（文字数）を優先
+                else if (spec == bestSpec) {
+                    val nameAlt = SKILL_NAMES.getOrElse(alt) { "" }
+                    val nameCur = SKILL_NAMES.getOrElse(bestId) { "" }
+                    if (nameAlt.length > nameCur.length) {
+                        bestId = alt
+                    }
                 }
             }
-            s
+
+            if (bestId == s.globalIdx) s
+            else {
+                Log.i(TAG, "kind=$kind confusion ${s.globalIdx}→$bestId")
+                OcrSkill(bestId, SKILL_NAMES.getOrElse(bestId) { s.name }, s.pts)
+            }
         }
     }
+
+    /** そのスキルが何種類に出現するか（1=その種類のみ特有, 4=全部） */
+    private fun kindSpecificity(skillId: Int): Int {
+        var n = 0
+        for (k in 0..3) if (skillInKind(skillId, k)) n++
+        return if (n == 0) 99 else n
+    }
 }
+
