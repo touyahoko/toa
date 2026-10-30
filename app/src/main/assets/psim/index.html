@@ -52,6 +52,22 @@ html, body {
   background: #090C13 !important;
   color: #F5F7FA !important;
 }
+
+#skillSelect, select {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  color: #F5F7FA !important;
+  background: #12171F !important;
+  border: 1px solid #2A303C !important;
+  min-height: 40px !important;
+  width: 100% !important;
+}
+#skillSelect option {
+  color: #F5F7FA !important;
+  background: #12171F !important;
+}
+
 /* ツール名・ロゴ・説明文を非表示 */
 header.hd,
 .hd,
@@ -1519,8 +1535,10 @@ function esc(s) {
 }
 
 function renderNotice() {
+  const el = $('dataNotice');
+  if (!el) return;
   const pieces = DATA.armor.reduce((n, s) => n + s.pieces.length, 0);
-  $('dataNotice').textContent =
+  el.textContent =
     '防具は全レア度（剣士用・ガンナー用・兼用）、装飾品（' + DATA.decorations.length +
     '種）、護石の上限を取り込み済みです。発動スキルは全系統（' + Object.keys(DATA.skills).length + '系統）から選べます。';
 }
@@ -1875,13 +1893,19 @@ function renderCharmView() {
   });
   return h + '</tbody></table></div>';
 }
-$('cmLink').addEventListener('click', e => {
+(function(){
+  const link = $('cmLink');
+  if (!link) return;
+  link.addEventListener('click', e => {
   e.preventDefault();
-  const box = $('cmView'), open = box.hidden;
+  const box = $('cmView');
+  if (!box) return;
+  const open = box.hidden;
   if (open && !box.innerHTML) box.innerHTML = renderCharmView();
   box.hidden = !open;
-  $('cmLink').setAttribute('aria-expanded', String(open));
+  link.setAttribute('aria-expanded', String(open));
 });
+})();
 
 // ---- 追加スキル検索 ----
 // いま選んでいるスキルに、別のスキル（または選んだスキルの上の段階）を足せるかを調べる。足せるスキル名だけを出す。
@@ -1992,9 +2016,14 @@ function renderAdd(chains) {
 }
 $('addSearchBtn').addEventListener('click', runAddSearch);
 
-renderNotice();
-renderSelect();
-update();
+try {
+  renderNotice();
+  renderSelect();
+  update();
+} catch (err) {
+  console.error(err);
+  try { renderSelect(); update(); } catch (e2) { console.error(e2); }
+}
 </script>
 
 </body></html>
