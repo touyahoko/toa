@@ -336,15 +336,46 @@ object RenkinSwitchReader {
             }
         }
         // 既知の取り違え: 重撃弾強化(50) vs 強撃瓶追加(59)
-        // 50 が勝っていても 59 が候補にいれば、幅とスコア余裕で 59 を優先
         run {
             val c50 = ranked.firstOrNull { it.id == 50 }
             val c59 = ranked.firstOrNull { it.id == 59 }
             if (c50 != null && c59 != null) {
-                // 両候補がある場合は強撃瓶追加(59)を優先（字形が酷似するため）
                 best = c59
             } else if (best.id == 50 && c59 != null) {
                 best = c59
+            }
+        }
+        // 剣術(36) vs 耐暑(8)/耐寒(9)/耐震(6) — 2文字スキルの取り違え
+        run {
+            if (best.id == 36) {
+                val alts = ranked.filter { it.id == 8 || it.id == 9 || it.id == 6 }
+                if (alts.isNotEmpty()) {
+                    val alt = alts.maxBy { it.score }
+                    // 耐X が候補に入っていれば優先（スコアが極端に低くなければ）
+                    if (alt.score >= best.score - 0.18 || alt.score >= 0.20) {
+                        best = alt
+                    }
+                } else {
+                    // ranked に無くても 耐暑(8) を強制再照合
+                    val forced = matchSkillForceId(roiTh, 8)
+                    if (forced != null && (forced >= best.score - 0.10 || forced >= 0.18)) {
+                        return 8 to forced
+                    }
+                }
+            }
+        }
+        // 特殊攻撃(32) vs 精密射撃(46)
+        run {
+            if (best.id == 32) {
+                val c46 = ranked.firstOrNull { it.id == 46 }
+                if (c46 != null && (c46.score >= best.score - 0.15 || c46.score >= 0.22)) {
+                    best = c46
+                } else {
+                    val forced = matchSkillForceId(roiTh, 46)
+                    if (forced != null && (forced >= best.score - 0.10 || forced >= 0.20)) {
+                        return 46 to forced
+                    }
+                }
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
