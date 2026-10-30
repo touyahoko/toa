@@ -173,9 +173,9 @@ object RenkinSwitchReader {
                 } else {
                     val valid = picks.filter { it.kindFit > 0 }
                     val chosen = if (valid.isNotEmpty()) {
-                        valid.maxBy { it.kindFit * 1000.0 + it.sc }
+                        valid.maxByOrNull { it.kindFit * 1000.0 + it.sc }!!
                     } else {
-                        picks.maxBy { it.sc }
+                        picks.maxByOrNull { it.sc }!!
                     }
                     s2Id = chosen.id
                     s2Sc = chosen.sc
@@ -402,7 +402,7 @@ object RenkinSwitchReader {
             }
         }
         if (cands.isEmpty()) return emptyList()
-        val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
+        val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxByOrNull { it.score }!! }
         // Keep lower scores for kind-table disambiguation
         return bestById.sortedByDescending { it.score }
             .take(topN)
@@ -477,20 +477,20 @@ object RenkinSwitchReader {
         }
         if (cands.isEmpty()) return null to -1.0
         // id ごとに最良スコアを残す
-        val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
+        val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxByOrNull { it.score }!! }
         val ranked = bestById.sortedByDescending { it.score }
         // 上位から「幅が広くスコアが十分な」候補を優先
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
         var best = ranked[0]
         if (ranked.size > 1) {
             val top = ranked.take(20)
-            best = top.maxBy { c -> c.score * 100.0 + c.width * 0.15 }
+            best = top.maxByOrNull { c -> c.score * 100.0 + c.width * 0.15 }!!
             val a = ranked[0]
             // 長いスキル名: 幅が明らかに広い見本がスコア僅差なら採用
             // （重撃弾強化 vs 強撃瓶追加 など「撃」共通の取り違え対策）
             val longer = top.filter { it.width >= a.width + 8 && it.score >= a.score - 0.20 }
             if (longer.isNotEmpty()) {
-                best = longer.maxBy { it.score * 100.0 + it.width * 0.20 }
+                best = longer.maxByOrNull { it.score * 100.0 + it.width * 0.20 }!!
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
@@ -560,7 +560,7 @@ object RenkinSwitchReader {
         // 1桁と2桁が近いとき2桁を優先（余り減点済み）
         val multi = cands.filter { it.id >= 10 }
         if (best.id < 10 && multi.isNotEmpty()) {
-            val m = multi.maxBy { it.score }
+            val m = multi.maxByOrNull { it.score }!!
             if (m.score >= best.score - 0.08) best = m
         }
         return if (best.score >= DIGIT_MIN) best.id to best.score else null to best.score
