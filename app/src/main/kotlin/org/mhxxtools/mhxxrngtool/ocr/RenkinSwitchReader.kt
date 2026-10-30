@@ -32,10 +32,10 @@ object RenkinSwitchReader {
     private const val TOPHAT_K = 25
 
     // 公式 read.rs と同じ座標
-    private val NAME1 = intArrayOf(655, 165, 820, 191)
-    private val PTS1 = intArrayOf(815, 165, 870, 191)
-    private val NAME2 = intArrayOf(655, 194, 820, 218)
-    private val PTS2 = intArrayOf(815, 194, 870, 218)
+    private val NAME1 = intArrayOf(655, 165, 800, 191)
+    private val PTS1 = intArrayOf(795, 165, 850, 191)
+    private val NAME2 = intArrayOf(655, 194, 800, 218)
+    private val PTS2 = intArrayOf(795, 194, 850, 218)
     private const val NAME_LEFT = 667
     private const val NAME_SEARCH = 4
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247)
@@ -46,9 +46,9 @@ object RenkinSwitchReader {
     private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
     private const val SLOT_SEARCH = 4
 
-    private const val SKILL_MIN = 0.28
+    private const val SKILL_MIN = 0.42
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.35
+    private const val LEFTOVER = 1.15
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -289,11 +289,9 @@ object RenkinSwitchReader {
             val tbl = KIND_TABLES[preferredKind]
             if (tbl != null) (tbl.skill1.toSet() + tbl.skill2.toSet()) else null
         } else null
-        // インク範囲に切り詰めてから照合（余白で長い見本が有利になるのを防ぐ）
-        val inkRoi = cropToInk(roiTh)
         for (tmpl in skillTmpls) {
             if (allowedIds != null && tmpl.id !in allowedIds) continue
-            for (sc in doubleArrayOf(0.92, 0.96, 1.0, 1.04, 1.08)) {
+            for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
                 if (th > roiTh.rows() || tw > roiTh.cols()) {
@@ -308,36 +306,35 @@ object RenkinSwitchReader {
                 if (th > roiTh.rows() || tw > roiTh.cols()) continue
                 val scaled = Mat()
                 Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
-                val pair = matchNcc(inkRoi, scaled)
+                val pair = matchNcc(roiTh, scaled)
                 if (pair != null) {
-                    val left = leftoverRatio(inkRoi, pair.second, scaled.cols())
-                    // NCC - 余り減点。インク外にインクが残る長い誤マッチを落とす
-                    val adj = pair.first - LEFTOVER * left
-                    // 見本幅がインク幅に近いほど加点（短いスキルを自然に優先）
-                    val inkW = inkRoi.cols().toDouble().coerceAtLeast(1.0)
-                    val widthRatio = scaled.cols().toDouble() / inkW
-                    val widthFit = 1.0 - kotlin.math.abs(1.0 - widthRatio).coerceAtMost(1.0)
-                    val finalScore = adj + 0.08 * widthFit
-                    cands += Cand(tmpl.id, finalScore, pair.second, scaled.cols())
+                    // 左揃え付近、または幅のある見本（長いスキル名）
+                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 40) {
+                        val left = leftoverRatio(roiTh, pair.second, scaled.cols())
+                        val adj = pair.first - LEFTOVER * left
+                        cands += Cand(tmpl.id, adj, pair.second, scaled.cols())
+                    }
                 }
                 scaled.release()
             }
         }
-        if (inkRoi !== roiTh) inkRoi.release()
         if (cands.isEmpty()) return null to -1.0
         // id ごとに最良スコアを残す
         val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
         val ranked = bestById.sortedByDescending { it.score }
         // 上位から「幅が広くスコアが十分な」候補を優先
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
-        // スコア最大を採用。僅差(0.04以内)ならインク幅との差が小さい方
         var best = ranked[0]
         if (ranked.size > 1) {
-            val topScore = ranked[0].score
-            val close = ranked.filter { it.score >= topScore - 0.04 }
-            best = close.maxBy { it.score }
+            val top = ranked.take(15)
+            // スコア優先。僅差なら幅の広い見本（長いスキル名）を優先
+            best = top.maxBy { c -> c.score * 100.0 + c.width * 0.15 }
+            val a = ranked[0]
+            val longer = top.filter { it.width >= a.width + 6 && it.score >= a.score - 0.12 }
+            if (longer.isNotEmpty()) {
+                best = longer.maxBy { it.score * 100.0 + it.width * 0.15 }
+            }
         }
-        // 自然選択: 調整スコア最大。僅差ならインク幅に近い見本を優先
         if (best.score < SKILL_MIN) return null to best.score
         return best.id to best.score
     }
