@@ -1,63 +1,34 @@
 package org.mhxxtools.mhxxrngtool.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.mhxxtools.mhxxrngtool.AppStateViewModel
 import org.mhxxtools.mhxxrngtool.rng.KIND_NAMES
-import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointScreen
-import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointViewModel
+import org.mhxxtools.mhxxrngtool.ui.search.SearchScreen
+import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.around.AroundScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundViewModel
 import org.mhxxtools.mhxxrngtool.ui.combo.ComboScreen
 import org.mhxxtools.mhxxrngtool.ui.combo.ComboViewModel
+import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointScreen
+import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointViewModel
 import org.mhxxtools.mhxxrngtool.ui.ocr.OcrScreen
 import org.mhxxtools.mhxxrngtool.ui.ocr.OcrViewModel
 import org.mhxxtools.mhxxrngtool.ui.reward.RewardScreen
 import org.mhxxtools.mhxxrngtool.ui.reward.RewardViewModel
-import org.mhxxtools.mhxxrngtool.ui.search.SearchScreen
-import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
-import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
-import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryViewModel
-import org.mhxxtools.mhxxrngtool.ui.settings.SettingsScreen
-import android.net.Uri
+import org.mhxxtools.mhxxrngtool.ui.psim.SkillSimScreen
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "シミュ")
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
     val searchVm: SearchViewModel = viewModel()
@@ -67,125 +38,45 @@ fun MainScreen(appState: AppStateViewModel) {
     val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
-    val galleryVm: GalleryViewModel = viewModel()
-    var showSettings by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val context = LocalContext.current
 
     LaunchedEffect(appState.kind) {
         searchVm.onKindChanged(appState.kind)
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(HtmlColors.Bg)
-            .windowInsetsPadding(WindowInsets.systemBars)
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(HtmlColors.Bg)
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "MHXX RNG Tool",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = HtmlColors.Text
+    Scaffold(
+        topBar = {
+            Column {
+                TopAppBar(title = { Text("MHXX RNG Tool", fontSize = 16.sp) })
+                GlobalControls(
+                    kind = appState.kind,
+                    onKindChanged = { appState.setKind(it) }
                 )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(HtmlColors.Surface2)
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                ) {
-                    Text("HTML全機能移植", fontSize = 11.sp, color = HtmlColors.Muted)
-                }
-            }
-
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("種類:", fontSize = 12.sp, color = HtmlColors.Muted)
-                KIND_NAMES.forEachIndexed { idx, name ->
-                    val short = when {
-                        name.startsWith("風化") -> "風化"
-                        name.startsWith("古") -> "古び"
-                        name.startsWith("光") -> "光る"
-                        else -> "なぞ"
+                ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
+                    TABS.forEachIndexed { idx, title ->
+                        Tab(
+                            selected = selectedTab == idx,
+                            onClick = { selectedTab = idx },
+                            text = { Text(title, fontSize = 12.sp) }
+                        )
                     }
-                    HtmlChip(
-                        label = short,
-                        selected = appState.kind == idx,
-                        onClick = { appState.setKind(idx) }
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                HtmlChip(
-                    label = "設定",
-                    selected = showSettings,
-                    onClick = { showSettings = !showSettings }
-                )
-            }
-
-            Spacer(Modifier.height(2.dp))
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 4.dp)
-            ) {
-                TABS.forEachIndexed { idx, title ->
-                    HtmlTab(
-                        title = title,
-                        selected = selectedTab == idx,
-                        onClick = { selectedTab = idx }
-                    )
                 }
             }
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(HtmlColors.Border.copy(alpha = 0.6f))
-            )
         }
-
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(HtmlColors.Bg)
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
+    ) { padding ->
+        Box(Modifier.padding(padding).fillMaxSize()) {
             when (selectedTab) {
                 0 -> SearchScreen(
                     vm = searchVm,
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
-                        timerVm.applyTargetFromSearch(frame)
-                        selectedTab = 6
+                        timerVm.applyFromFrame(frame)
+                        selectedTab = 6  // タイマーに自動セットして移動
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
-                2 -> ComboScreen(
-                    vm = comboVm,
-                    onResultTap = { frame ->
-                        timerVm.setCurrentPosFrame(frame)
-                        selectedTab = 6
-                    }
-                )
+                2 -> ComboScreen(vm = comboVm)
                 3 -> RewardScreen(vm = rewardVm, kind = appState.kind)
                 4 -> AimPointScreen(vm = aimVm, kind = appState.kind)
                 5 -> OcrScreen(
@@ -201,74 +92,37 @@ fun MainScreen(appState: AppStateViewModel) {
                         selectedTab = 0
                     },
                     onFrameTap = { frame ->
-                        timerVm.applyTargetFromSearch(frame)
-                        selectedTab = 6
+                        timerVm.applyFromFrame(frame)
+                        selectedTab = 6  // タイマー
                     }
                 )
                 6 -> TimerScreen(vm = timerVm)
-            }
-            if (showSettings) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(HtmlColors.Bg)
-                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                ) {
-                    SettingsScreen(
-                        galleryVm = galleryVm,
-                        onClose = { showSettings = false },
-                        onUseImage = { uri ->
-                            showSettings = false
-                            ocrVm.recognizeFromUri(context, uri, appState.kind)
-                            selectedTab = 5
-                        },
-                        onUseVideo = { uri ->
-                            showSettings = false
-                            selectedTab = 2 // 調合
-                            comboVm.importVideoAndRun(uri)
-                        }
-                    )
-                }
+                7 -> SkillSimScreen()
             }
         }
     }
 }
 
 @Composable
-private fun HtmlChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) HtmlColors.Accent else HtmlColors.Surface2
-    val fg = if (selected) Color.White else HtmlColors.Text
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(bg)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-    ) {
-        Text(label, fontSize = 12.sp, color = fg)
-    }
-}
-
-@Composable
-private fun HtmlTab(title: String, selected: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            title,
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) HtmlColors.Accent else HtmlColors.Muted
-        )
-        Spacer(Modifier.height(4.dp))
-        Box(
-            Modifier
-                .width(28.dp)
-                .height(2.dp)
-                .background(if (selected) HtmlColors.Accent else Color.Transparent)
-        )
+private fun GlobalControls(
+    kind: Int,
+    onKindChanged: (Int) -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text("種類:", fontSize = 12.sp)
+            KIND_NAMES.forEachIndexed { idx, name ->
+                FilterChip(
+                    selected = kind == idx,
+                    onClick = { onKindChanged(idx) },
+                    label = { Text(name.take(3), fontSize = 11.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+            }
+        }
     }
 }
