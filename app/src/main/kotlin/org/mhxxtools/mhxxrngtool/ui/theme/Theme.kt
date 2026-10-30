@@ -9,21 +9,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-/** HTMLツールと同じカラーパレット */
-object HtmlColors {
-    val Bg = Color(0xFF12141A)
-    val Surface = Color(0xFF1C1F28)
-    val Surface2 = Color(0xFF252836)
-    val Border = Color(0xFF33374A)
-    val Text = Color(0xFFE8EAF0)
-    val Muted = Color(0xFF8B90A5)
-    val Accent = Color(0xFF5B8DEF)
-    val Accent2 = Color(0xFF3D6BC7)
-    val Success = Color(0xFF4CAF82)
-    val Warn = Color(0xFFE6A817)
-    val Danger = Color(0xFFE05C5C)
-}
-
 private val HtmlDarkScheme = darkColorScheme(
     primary = HtmlColors.Accent,
     onPrimary = Color.White,
