@@ -32,10 +32,10 @@ object RenkinSwitchReader {
     private const val TOPHAT_K = 25
 
     // 公式 read.rs と同じ座標
-    private val NAME1 = intArrayOf(655, 165, 800, 191)
-    private val PTS1 = intArrayOf(795, 165, 850, 191)
-    private val NAME2 = intArrayOf(655, 194, 800, 218)
-    private val PTS2 = intArrayOf(795, 194, 850, 218)
+    private val NAME1 = intArrayOf(655, 165, 820, 191)
+    private val PTS1 = intArrayOf(815, 165, 870, 191)
+    private val NAME2 = intArrayOf(655, 194, 820, 218)
+    private val PTS2 = intArrayOf(815, 194, 870, 218)
     private const val NAME_LEFT = 667
     private const val NAME_SEARCH = 4
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247)
@@ -496,7 +496,7 @@ object RenkinSwitchReader {
             n
         }
         val totalInk = rowInk.sum()
-        if (totalInk < 8) return true
+        if (totalInk < 5) return true
         val thr = (0.25 * cols).toInt().coerceAtLeast(2)
         val strong = (0 until rows).filter { rowInk[it] >= thr }
         if (strong.isEmpty()) return false
