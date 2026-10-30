@@ -57,7 +57,7 @@ class SkillSimViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setJob(v: String) {
+    fun updateJob(v: String) {
         if (job == v) return
         job = v
         targets.clear()
@@ -65,13 +65,13 @@ class SkillSimViewModel(app: Application) : AndroidViewModel(app) {
         status = "スキルを選んで追加してください"
     }
 
-    fun setSex(v: String) {
+    fun updateSex(v: String) {
         if (sex == v) return
         sex = v
         rerun()
     }
 
-    fun setWeaponSlots(v: Int) {
+    fun updateWeaponSlots(v: Int) {
         if (weaponSlots == v) return
         weaponSlots = v
         rerun()

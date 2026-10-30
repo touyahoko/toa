@@ -39,14 +39,14 @@ fun SkillSimScreen(vm: SkillSimViewModel = viewModel()) {
             SectionCard {
                 Text("職", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = vm.job == "s", onClick = { vm.setJob("s") }, label = { Text("剣士") })
-                    FilterChip(selected = vm.job == "g", onClick = { vm.setJob("g") }, label = { Text("ガンナー") })
+                    FilterChip(selected = vm.job == "s", onClick = { vm.updateJob("s") }, label = { Text("剣士") })
+                    FilterChip(selected = vm.job == "g", onClick = { vm.updateJob("g") }, label = { Text("ガンナー") })
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("性別", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = vm.sex == "m", onClick = { vm.setSex("m") }, label = { Text("男性") })
-                    FilterChip(selected = vm.sex == "f", onClick = { vm.setSex("f") }, label = { Text("女性") })
+                    FilterChip(selected = vm.sex == "m", onClick = { vm.updateSex("m") }, label = { Text("男性") })
+                    FilterChip(selected = vm.sex == "f", onClick = { vm.updateSex("f") }, label = { Text("女性") })
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("武器スロット", style = MaterialTheme.typography.labelMedium)
@@ -54,7 +54,7 @@ fun SkillSimScreen(vm: SkillSimViewModel = viewModel()) {
                     (0..3).forEach { n ->
                         FilterChip(
                             selected = vm.weaponSlots == n,
-                            onClick = { vm.setWeaponSlots(n) },
+                            onClick = { vm.updateWeaponSlots(n) },
                             label = { Text("$n") }
                         )
                     }
