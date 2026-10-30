@@ -640,6 +640,29 @@ object RenkinSwitchReader {
 
     /** 公式 is_dashes */
 
+
+    /**
+     * スキル1が成立しうる錬金種類（0=風化..3=なぞ）を返す。
+     * ポイント範囲も見る。不明時は空リスト。
+     */
+    private fun possibleKindsForSkill1(s1: Int?, p1: Int): List<Int> {
+        if (s1 == null || s1 < 0) return emptyList()
+        val out = mutableListOf<Int>()
+        for (k in 0..3) {
+            val tbl = KIND_TABLES[k] ?: continue
+            val i1 = tbl.skill1.indexOf(s1)
+            if (i1 < 0) continue
+            if (p1 >= 0) {
+                val sp = tbl.sp1[i1]
+                val lo = minOf(sp[0], sp[1])
+                val hi = maxOf(sp[0], sp[1])
+                if (p1 < lo || p1 > hi) continue
+            }
+            out += k
+        }
+        return out
+    }
+
     /**
      * スキル1・2・ポイントがいずれかの種類テーブルに通るか。
      * 通るほど高得点（0=不通）。強制ID変換はしない。
