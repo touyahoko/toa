@@ -48,7 +48,7 @@ object RenkinSwitchReader {
 
     private const val SKILL_MIN = 0.28
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.15
+    private const val LEFTOVER = 1.35
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -289,9 +289,11 @@ object RenkinSwitchReader {
             val tbl = KIND_TABLES[preferredKind]
             if (tbl != null) (tbl.skill1.toSet() + tbl.skill2.toSet()) else null
         } else null
+        // インク範囲に切り詰めてから照合（余白で長い見本が有利になるのを防ぐ）
+        val inkRoi = cropToInk(roiTh)
         for (tmpl in skillTmpls) {
             if (allowedIds != null && tmpl.id !in allowedIds) continue
-            for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
+            for (sc in doubleArrayOf(0.92, 0.96, 1.0, 1.04, 1.08)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
                 if (th > roiTh.rows() || tw > roiTh.cols()) {
@@ -306,81 +308,67 @@ object RenkinSwitchReader {
                 if (th > roiTh.rows() || tw > roiTh.cols()) continue
                 val scaled = Mat()
                 Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
-                val pair = matchNcc(roiTh, scaled)
+                val pair = matchNcc(inkRoi, scaled)
                 if (pair != null) {
-                    // 左揃え付近、または幅のある見本（追加スキル含む）
-                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 40) {
-                        val left = leftoverRatio(roiTh, pair.second, scaled.cols())
-                        // 公式相当: NCC - leftover*係数。余りが多い短い誤マッチを落とす
-                        val adj = pair.first - LEFTOVER * left
-                        cands += Cand(tmpl.id, adj, pair.second, scaled.cols())
-                    }
+                    val left = leftoverRatio(inkRoi, pair.second, scaled.cols())
+                    // NCC - 余り減点。インク外にインクが残る長い誤マッチを落とす
+                    val adj = pair.first - LEFTOVER * left
+                    // 見本幅がインク幅に近いほど加点（短いスキルを自然に優先）
+                    val inkW = inkRoi.cols().toDouble().coerceAtLeast(1.0)
+                    val widthRatio = scaled.cols().toDouble() / inkW
+                    val widthFit = 1.0 - kotlin.math.abs(1.0 - widthRatio).coerceAtMost(1.0)
+                    val finalScore = adj + 0.08 * widthFit
+                    cands += Cand(tmpl.id, finalScore, pair.second, scaled.cols())
                 }
                 scaled.release()
             }
         }
+        if (inkRoi !== roiTh) inkRoi.release()
         if (cands.isEmpty()) return null to -1.0
         // id ごとに最良スコアを残す
         val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
         val ranked = bestById.sortedByDescending { it.score }
         // 上位から「幅が広くスコアが十分な」候補を優先
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
+        // スコア最大を採用。僅差(0.04以内)ならインク幅との差が小さい方
         var best = ranked[0]
         if (ranked.size > 1) {
-            val top = ranked.take(20)
-            best = top.maxBy { c -> c.score * 100.0 + c.width * 0.12 }
-            val a = top[0]
-            val longer = top.filter { it.width >= a.width + 4 && it.score >= a.score - 0.28 }
-            if (longer.isNotEmpty()) {
-                best = longer.maxBy { it.score * 100.0 + it.width * 0.12 }
-            }
+            val topScore = ranked[0].score
+            val close = ranked.filter { it.score >= topScore - 0.04 }
+            best = close.maxBy { it.score }
         }
-        // 既知の取り違え: 重撃弾強化(50) vs 強撃瓶追加(59)
-        run {
-            val c50 = ranked.firstOrNull { it.id == 50 }
-            val c59 = ranked.firstOrNull { it.id == 59 }
-            if (c50 != null && c59 != null) {
-                best = c59
-            } else if (best.id == 50 && c59 != null) {
-                best = c59
-            }
-        }
-        // 剣術(36) vs 耐暑(8)/耐寒(9)/耐震(6) — 2文字スキルの取り違え
-        run {
-            if (best.id == 36) {
-                val alts = ranked.filter { it.id == 8 || it.id == 9 || it.id == 6 }
-                if (alts.isNotEmpty()) {
-                    val alt = alts.maxBy { it.score }
-                    // 耐X が候補に入っていれば優先（スコアが極端に低くなければ）
-                    if (alt.score >= best.score - 0.18 || alt.score >= 0.20) {
-                        best = alt
-                    }
-                } else {
-                    // ranked に無くても 耐暑(8) を強制再照合
-                    val forced = matchSkillForceId(roiTh, 8)
-                    if (forced != null && (forced >= best.score - 0.10 || forced >= 0.18)) {
-                        return 8 to forced
-                    }
-                }
-            }
-        }
-        // 特殊攻撃(32) vs 精密射撃(46)
-        run {
-            if (best.id == 32) {
-                val c46 = ranked.firstOrNull { it.id == 46 }
-                if (c46 != null && (c46.score >= best.score - 0.15 || c46.score >= 0.22)) {
-                    best = c46
-                } else {
-                    val forced = matchSkillForceId(roiTh, 46)
-                    if (forced != null && (forced >= best.score - 0.10 || forced >= 0.20)) {
-                        return 46 to forced
-                    }
-                }
-            }
-        }
+        // 自然選択: 調整スコア最大。僅差ならインク幅に近い見本を優先
         if (best.score < SKILL_MIN) return null to best.score
         return best.id to best.score
     }
+
+    /** ROI 内のインク外接矩形で切り詰め（短いスキルと長いスキルの公平な照合用） */
+    private fun cropToInk(src: Mat): Mat {
+        val cols = src.cols(); val rows = src.rows()
+        if (cols < 4 || rows < 4) return src
+        val data = ByteArray(cols * rows)
+        src.get(0, 0, data)
+        var minX = cols; var maxX = -1; var minY = rows; var maxY = -1
+        for (y in 0 until rows) {
+            for (x in 0 until cols) {
+                if ((data[y * cols + x].toInt() and 0xFF) > 40) {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) return src
+        val pad = 2
+        val l = (minX - pad).coerceAtLeast(0)
+        val t = (minY - pad).coerceAtLeast(0)
+        val r = (maxX + 1 + pad).coerceAtMost(cols)
+        val b = (maxY + 1 + pad).coerceAtMost(rows)
+        if (r - l < 4 || b - t < 4) return src
+        return Mat(src, org.opencv.core.Rect(l, t, r - l, b - t)).clone()
+    }
+
 
     private fun matchDigit(roiTh: Mat): Pair<Int?, Double> {
         if (roiTh.rows() < 4 || roiTh.cols() < 4) return null to -1.0
