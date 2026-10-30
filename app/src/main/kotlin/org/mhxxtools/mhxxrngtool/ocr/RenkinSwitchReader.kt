@@ -143,29 +143,34 @@ object RenkinSwitchReader {
             var s2Id: Int? = null
             var s2Sc: Double = -1.0
             if (!skill2Empty) {
-                // 上位候補を取り、スキル1＋ポイントと種類テーブルが通る組み合わせを優先
-                // （強制置換ではなく、ゲーム上あり得る護石だけを自然選択）
-                val ranked = matchSkillRanked(name2, preferredKind = -1, topN = 12)
-                val ranked2 = if (kindForMatch in 0..3) {
-                    val tbl = KIND_TABLES[kindForMatch]
-                    val allow = if (tbl != null) tbl.skill1.toSet() + tbl.skill2.toSet() else emptySet()
-                    val inKind = ranked.filter { it.first in allow }
-                    if (inKind.isNotEmpty()) inKind else ranked
-                } else ranked
+                // スキル1が通る種類に出るスキル2だけ照合（全スキル対戦で50が独占するのを防ぐ）
+                // 達人+4 → 光る/なぞ → 59は候補、50は候補外
+                val kindsFromS1 = possibleKindsForSkill1(s1Id, p1 ?: -1)
+                val kinds = when {
+                    kindForMatch in 0..3 -> listOf(kindForMatch)
+                    kindsFromS1.isNotEmpty() -> kindsFromS1
+                    else -> listOf(0, 1, 2, 3)
+                }
+                val allowS2 = mutableSetOf<Int>()
+                for (k in kinds) {
+                    val tbl = KIND_TABLES[k] ?: continue
+                    allowS2.addAll(tbl.skill2.toList())
+                }
                 val (p2tmp, _) = matchDigit(pts2)
                 val p2val = p2tmp ?: -1
-                if (ranked.isEmpty()) {
+                data class Pick(val id: Int, val sc: Double, val kindFit: Int)
+                val picks = mutableListOf<Pick>()
+                for (id in allowS2) {
+                    val sc = matchSkillForceId(name2, id) ?: continue
+                    if (sc < SKILL_MIN - 0.12) continue
+                    val fit = kindFitScore(s1Id, p1 ?: -1, id, p2val)
+                    picks += Pick(id, sc, fit)
+                }
+                if (picks.isEmpty()) {
                     val one = matchSkill(name2, kindForMatch)
                     s2Id = one.first
                     s2Sc = one.second
                 } else {
-                    data class Pick(val id: Int, val sc: Double, val kindFit: Int)
-                    val picks = mutableListOf<Pick>()
-                    for ((id, sc) in ranked2) {
-                        val fit = kindFitScore(s1Id, p1 ?: -1, id, p2val)
-                        picks += Pick(id, sc, fit)
-                    }
-                    // 種類に通る候補があればその中でスコア最大。なければNCC最大
                     val valid = picks.filter { it.kindFit > 0 }
                     val chosen = if (valid.isNotEmpty()) {
                         valid.maxBy { it.kindFit * 1000.0 + it.sc }
@@ -174,7 +179,7 @@ object RenkinSwitchReader {
                     }
                     s2Id = chosen.id
                     s2Sc = chosen.sc
-                    Log.i(TAG, "skill2 goseki=$gosekiName candidates=${ranked2.map { "${it.first}:${"%.3f".format(it.second)}" }} pick=${chosen.id} kindFit=${chosen.kindFit}")
+                    Log.i(TAG, "skill2 kinds=$kinds allow=${allowS2.size} goseki=$gosekiName pick=${chosen.id} sc=${"%.3f".format(chosen.sc)} fit=${chosen.kindFit}")
                 }
             }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
