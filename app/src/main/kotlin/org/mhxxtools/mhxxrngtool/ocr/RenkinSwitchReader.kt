@@ -47,6 +47,22 @@ object RenkinSwitchReader {
     private const val SLOT_SEARCH = 4
 
     private const val SKILL_MIN = 0.42
+    private const val GOSEKI_MIN = 0.35
+
+    /** 護石アイコン ROI（タイトル左）。種類自動判定用 */
+    private val GOSEKI_ICON_ROI = intArrayOf(618, 132, 700, 185)
+    private val GOSEKI_KIND: Map<String, Int> = mapOf(
+        "兵士の護石" to 0,
+        "闘士の護石" to 1,
+        "騎士の護石" to 1,
+        "城塞の護石" to 2,
+        "女王の護石" to 2,
+        "王の護石" to 3,
+        "英雄の護石" to 3,
+        "龍の護石" to 3,
+        "伝説の護石" to 3,
+        "天の護石" to 3,
+    )
     private const val DIGIT_MIN = 0.35
     private const val LEFTOVER = 1.15
 
@@ -54,6 +70,8 @@ object RenkinSwitchReader {
 
     @Volatile private var loaded = false
     private val skillTmpls = mutableListOf<Tmpl>()
+    private data class GosekiTmpl(val name: String, val mat: Mat)
+    private val gosekiTmpls = mutableListOf<GosekiTmpl>()
     private val digitTmpls = mutableListOf<Tmpl>()
     private var labelMat: Mat? = null
     private var circleMat: Mat? = null
@@ -104,12 +122,22 @@ object RenkinSwitchReader {
                 Log.i(TAG, "panel_offset dx=$dx dy=$dy score=%.3f".format(labScore))
             }
 
+            val (gosekiKind, gosekiName) = matchGosekiKind(mx)
+            val kindForMatch = when {
+                preferredKind in 0..3 -> preferredKind
+                gosekiKind in 0..3 -> gosekiKind
+                else -> -1
+            }
+            if (gosekiName.isNotEmpty()) {
+                Log.i(TAG, "using goseki kind=$kindForMatch ($gosekiName)")
+            }
+
             val name1 = tophatRegion(mx, NAME1)
             val pts1 = tophatRegion(mx, PTS1)
             val name2 = tophatRegion(mx, NAME2)
             val pts2 = tophatRegion(mx, PTS2)
 
-            val (s1Id, s1Sc) = matchSkill(name1, preferredKind)
+            val (s1Id, s1Sc) = matchSkill(name1, kindForMatch)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
             var s2Id: Int? = null
@@ -117,17 +145,23 @@ object RenkinSwitchReader {
             if (!skill2Empty) {
                 // 上位候補を取り、スキル1＋ポイントと種類テーブルが通る組み合わせを優先
                 // （強制置換ではなく、ゲーム上あり得る護石だけを自然選択）
-                val ranked = matchSkillRanked(name2, preferredKind = -1, topN = 6)
+                val ranked = matchSkillRanked(name2, preferredKind = -1, topN = 12)
+                val ranked2 = if (kindForMatch in 0..3) {
+                    val tbl = KIND_TABLES[kindForMatch]
+                    val allow = if (tbl != null) tbl.skill1.toSet() + tbl.skill2.toSet() else emptySet()
+                    val inKind = ranked.filter { it.first in allow }
+                    if (inKind.isNotEmpty()) inKind else ranked
+                } else ranked
                 val (p2tmp, _) = matchDigit(pts2)
                 val p2val = p2tmp ?: -1
                 if (ranked.isEmpty()) {
-                    val one = matchSkill(name2, preferredKind)
+                    val one = matchSkill(name2, kindForMatch)
                     s2Id = one.first
                     s2Sc = one.second
                 } else {
                     data class Pick(val id: Int, val sc: Double, val kindFit: Int)
                     val picks = mutableListOf<Pick>()
-                    for ((id, sc) in ranked) {
+                    for ((id, sc) in ranked2) {
                         val fit = kindFitScore(s1Id, p1 ?: -1, id, p2val)
                         picks += Pick(id, sc, fit)
                     }
@@ -140,7 +174,7 @@ object RenkinSwitchReader {
                     }
                     s2Id = chosen.id
                     s2Sc = chosen.sc
-                    Log.i(TAG, "skill2 candidates=${ranked.map { "${it.first}:${"%.3f".format(it.second)}" }} pick=${chosen.id} kindFit=${chosen.kindFit}")
+                    Log.i(TAG, "skill2 goseki=$gosekiName candidates=${ranked2.map { "${it.first}:${"%.3f".format(it.second)}" }} pick=${chosen.id} kindFit=${chosen.kindFit}")
                 }
             }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
@@ -157,9 +191,14 @@ object RenkinSwitchReader {
                 skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
             }
 
+            val outKind = when {
+                kindForMatch in 0..3 -> kindForMatch
+                gosekiKind in 0..3 -> gosekiKind
+                else -> -1
+            }
             if (skills.isEmpty()) {
                 return@withContext Result(
-                    OcrCharm(-1, slots, emptyList()),
+                    OcrCharm(outKind, slots, emptyList()),
                     "fail s1=%.2f s2=%.2f empty2=$skill2Empty lab=%.2f $slotNote".format(s1Sc, s2Sc, labScore),
                     0.1f
                 )
@@ -175,7 +214,7 @@ object RenkinSwitchReader {
                 (if (skills.size > 1) " s2=%.2f".format(s2Sc) else " (no-s2)") +
                 " p1=%.2f p2=%.2f lab=%.2f $slotNote".format(p1Sc, p2Sc, labScore)
             Log.i(TAG, note)
-            Result(OcrCharm(-1, slots, skills), note, conf)
+            Result(OcrCharm(outKind, slots, skills), note, conf)
         } finally {
             if (screenBmp !== bitmap) screenBmp.recycle()
         }
@@ -189,7 +228,7 @@ object RenkinSwitchReader {
         synchronized(this) {
             if (loaded) return
             if (!OpenCvBridge.ensureInit()) return
-            skillTmpls.clear(); digitTmpls.clear()
+            skillTmpls.clear(); digitTmpls.clear(); gosekiTmpls.clear()
             val am = context.assets
             fun listPng(dir: String) =
                 runCatching { am.list(dir)?.filter { it.endsWith(".png", true) }.orEmpty() }
@@ -222,9 +261,62 @@ object RenkinSwitchReader {
             labelMat = loadTh("renkin/label.png")
             circleMat = loadTh("renkin/slots/circle.png", 9)
             dashMat = loadTh("renkin/slots/dash.png", 9)
+            for (n in listPng("renkin/goseki")) {
+                val name = n.substringBeforeLast('.')
+                runCatching {
+                    am.open("renkin/goseki/$n").use { ins ->
+                        val bmp = BitmapFactory.decodeStream(ins) ?: return@use
+                        val mat = OpenCvBridge.bitmapToMat(bmp)
+                        bmp.recycle()
+                        val g = maxChannel(mat)
+                        mat.release()
+                        gosekiTmpls += GosekiTmpl(name, g)
+                    }
+                }
+            }
             loaded = true
-            Log.i(TAG, "loaded skills=${skillTmpls.size} digits=${digitTmpls.size}")
+            Log.i(TAG, "loaded skills=${skillTmpls.size} digits=${digitTmpls.size} goseki=${gosekiTmpls.size}")
         }
+    }
+
+    private fun matchGosekiKind(mx: Mat): Pair<Int, String> {
+        if (gosekiTmpls.isEmpty()) return -1 to ""
+        val roi = GOSEKI_ICON_ROI
+        val s = 24
+        val l = (roi[0] - s).coerceAtLeast(0)
+        val t = (roi[1] - s).coerceAtLeast(0)
+        val rr = (roi[2] + s).coerceAtMost(mx.cols())
+        val b = (roi[3] + s).coerceAtMost(mx.rows())
+        if (rr - l < 8 || b - t < 8) return -1 to ""
+        val win = Mat(mx, org.opencv.core.Rect(l, t, rr - l, b - t)).clone()
+        var bestName = ""
+        var bestScore = -1.0
+        try {
+            for (tmpl in gosekiTmpls) {
+                for (sc in doubleArrayOf(0.9, 1.0, 1.1, 1.25, 1.5)) {
+                    val tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
+                    val th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
+                    if (th > win.rows() || tw > win.cols()) continue
+                    val scaled = Mat()
+                    Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
+                    val pair = matchNcc(win, scaled)
+                    scaled.release()
+                    if (pair != null && pair.first > bestScore) {
+                        bestScore = pair.first
+                        bestName = tmpl.name
+                    }
+                }
+            }
+        } finally {
+            win.release()
+        }
+        if (bestScore < GOSEKI_MIN || bestName.isEmpty()) {
+            Log.i(TAG, "goseki unmatched score=%.3f".format(bestScore))
+            return -1 to ""
+        }
+        val kind = GOSEKI_KIND[bestName] ?: -1
+        Log.i(TAG, "goseki=$bestName kind=$kind score=%.3f".format(bestScore))
+        return kind to bestName
     }
 
     private fun panelOffset(mx: Mat): Triple<Int, Int, Double> {
@@ -306,8 +398,8 @@ object RenkinSwitchReader {
         }
         if (cands.isEmpty()) return emptyList()
         val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
+        // Keep lower scores for kind-table disambiguation
         return bestById.sortedByDescending { it.score }
-            .filter { it.score >= SKILL_MIN - 0.08 }
             .take(topN)
             .map { it.id to it.score }
     }
