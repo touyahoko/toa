@@ -326,13 +326,14 @@ object RenkinSwitchReader {
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
         var best = ranked[0]
         if (ranked.size > 1) {
-            val top = ranked.take(15)
-            // スコア優先。僅差なら幅の広い見本（長いスキル名）を優先
+            val top = ranked.take(20)
             best = top.maxBy { c -> c.score * 100.0 + c.width * 0.15 }
             val a = ranked[0]
-            val longer = top.filter { it.width >= a.width + 6 && it.score >= a.score - 0.12 }
+            // 長いスキル名: 幅が明らかに広い見本がスコア僅差なら採用
+            // （重撃弾強化 vs 強撃瓶追加 など「撃」共通の取り違え対策）
+            val longer = top.filter { it.width >= a.width + 8 && it.score >= a.score - 0.20 }
             if (longer.isNotEmpty()) {
-                best = longer.maxBy { it.score * 100.0 + it.width * 0.15 }
+                best = longer.maxBy { it.score * 100.0 + it.width * 0.20 }
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
