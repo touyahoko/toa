@@ -57,6 +57,7 @@ class SkillSimViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    @JvmName("setJobValue")
     fun setJob(v: String) {
         if (job == v) return
         job = v
@@ -65,12 +66,14 @@ class SkillSimViewModel(app: Application) : AndroidViewModel(app) {
         status = "スキルを選んで追加してください"
     }
 
+    @JvmName("setSexValue")
     fun setSex(v: String) {
         if (sex == v) return
         sex = v
         rerun()
     }
 
+    @JvmName("setWeaponSlotsValue")
     fun setWeaponSlots(v: Int) {
         if (weaponSlots == v) return
         weaponSlots = v
