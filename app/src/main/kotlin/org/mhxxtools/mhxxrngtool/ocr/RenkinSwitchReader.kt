@@ -112,22 +112,35 @@ object RenkinSwitchReader {
             val (s1Id, s1Sc) = matchSkill(name1, preferredKind)
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
-            val s2Match = if (skill2Empty) null to 1.0 else matchSkill(name2, preferredKind)
-            var s2Id: Int? = s2Match.first
-            var s2Sc: Double = s2Match.second
-            // 重撃弾強化(50) ↔ 強撃瓶追加(59) 取り違え対策
-            // 種類テーブル外のIDは後段 Hybrid で補正。ここでは候補を種類で絞っている。
-            if (!skill2Empty && s2Id != null && preferredKind in 0..3) {
-                val tbl = KIND_TABLES[preferredKind]
-                val allowed = if (tbl != null) tbl.skill1.toSet() + tbl.skill2.toSet() else emptySet()
-                if (s2Id !in allowed) {
-                    // 種類内で再照合
-                    val re = matchSkill(name2, preferredKind)
-                    if (re.first != null) {
-                        s2Id = re.first
-                        s2Sc = re.second
-                        Log.i(TAG, "re-match skill2 within kind=$preferredKind -> $s2Id")
+            var s2Id: Int? = null
+            var s2Sc: Double = -1.0
+            if (!skill2Empty) {
+                // 上位候補を取り、スキル1＋ポイントと種類テーブルが通る組み合わせを優先
+                // （強制置換ではなく、ゲーム上あり得る護石だけを自然選択）
+                val ranked = matchSkillRanked(name2, preferredKind = -1, topN = 6)
+                val (p2tmp, _) = matchDigit(pts2)
+                val p2val = p2tmp ?: -1
+                if (ranked.isEmpty()) {
+                    val one = matchSkill(name2, preferredKind)
+                    s2Id = one.first
+                    s2Sc = one.second
+                } else {
+                    data class Pick(val id: Int, val sc: Double, val kindFit: Int)
+                    val picks = mutableListOf<Pick>()
+                    for ((id, sc) in ranked) {
+                        val fit = kindFitScore(s1Id, p1 ?: -1, id, p2val)
+                        picks += Pick(id, sc, fit)
                     }
+                    // 種類に通る候補があればその中でスコア最大。なければNCC最大
+                    val valid = picks.filter { it.kindFit > 0 }
+                    val chosen = if (valid.isNotEmpty()) {
+                        valid.maxBy { it.kindFit * 1000.0 + it.sc }
+                    } else {
+                        picks.maxBy { it.sc }
+                    }
+                    s2Id = chosen.id
+                    s2Sc = chosen.sc
+                    Log.i(TAG, "skill2 candidates=${ranked.map { "${it.first}:${"%.3f".format(it.second)}" }} pick=${chosen.id} kindFit=${chosen.kindFit}")
                 }
             }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
@@ -252,6 +265,53 @@ object RenkinSwitchReader {
 
 
     /** 指定IDの見本だけを照合（取り違え再判定用） */
+
+    /** 上位候補を返す（種類妥当性で自然に絞り込む用） */
+    private fun matchSkillRanked(roiTh: Mat, preferredKind: Int = -1, topN: Int = 5): List<Pair<Int, Double>> {
+        data class Cand(val id: Int, val score: Double, val width: Int)
+        val cands = mutableListOf<Cand>()
+        val preferLeft = NAME_LEFT - NAME1[0] - NAME_SEARCH
+        val preferRight = NAME_LEFT - NAME1[0] + NAME_SEARCH
+        val allowedIds: Set<Int>? = if (preferredKind in 0..3) {
+            val tbl = KIND_TABLES[preferredKind]
+            if (tbl != null) (tbl.skill1.toSet() + tbl.skill2.toSet()) else null
+        } else null
+        for (tmpl in skillTmpls) {
+            if (allowedIds != null && tmpl.id !in allowedIds) continue
+            for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
+                var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
+                var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
+                if (th > roiTh.rows() || tw > roiTh.cols()) {
+                    val fit = minOf(
+                        roiTh.rows().toDouble() / tmpl.mat.rows(),
+                        roiTh.cols().toDouble() / tmpl.mat.cols()
+                    ) * 0.98
+                    if (fit < 0.5) continue
+                    tw = (tmpl.mat.cols() * fit).toInt().coerceAtLeast(1)
+                    th = (tmpl.mat.rows() * fit).toInt().coerceAtLeast(1)
+                }
+                if (th > roiTh.rows() || tw > roiTh.cols()) continue
+                val scaled = Mat()
+                Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
+                val pair = matchNcc(roiTh, scaled)
+                if (pair != null) {
+                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 40) {
+                        val left = leftoverRatio(roiTh, pair.second, scaled.cols())
+                        val adj = pair.first - LEFTOVER * left
+                        cands += Cand(tmpl.id, adj, scaled.cols())
+                    }
+                }
+                scaled.release()
+            }
+        }
+        if (cands.isEmpty()) return emptyList()
+        val bestById = cands.groupBy { it.id }.map { (_, list) -> list.maxBy { it.score } }
+        return bestById.sortedByDescending { it.score }
+            .filter { it.score >= SKILL_MIN - 0.08 }
+            .take(topN)
+            .map { it.id to it.score }
+    }
+
     private fun matchSkillForceId(roiTh: Mat, skillId: Int): Double? {
         val tmpl = skillTmpls.firstOrNull { it.id == skillId } ?: return null
         var best = -1.0
@@ -482,6 +542,39 @@ object RenkinSwitchReader {
     }
 
     /** 公式 is_dashes */
+
+    /**
+     * スキル1・2・ポイントがいずれかの種類テーブルに通るか。
+     * 通るほど高得点（0=不通）。強制ID変換はしない。
+     */
+    private fun kindFitScore(s1: Int?, p1: Int, s2: Int?, p2: Int): Int {
+        if (s1 == null) return 0
+        var best = 0
+        for (k in 0..3) {
+            val tbl = KIND_TABLES[k] ?: continue
+            val i1 = tbl.skill1.indexOf(s1)
+            if (i1 < 0) continue
+            var sc = 5
+            if (p1 >= 0) {
+                val sp = tbl.sp1[i1]
+                val lo = minOf(sp[0], sp[1]); val hi = maxOf(sp[0], sp[1])
+                if (p1 in lo..hi) sc += 5
+            }
+            if (s2 != null) {
+                val i2 = tbl.skill2.indexOf(s2)
+                if (i2 < 0) continue
+                sc += 10
+                if (p2 >= 0) {
+                    val sp = tbl.sp2[i2]
+                    val lo = minOf(sp[0], sp[1]); val hi = maxOf(sp[0], sp[1])
+                    if (p2 in lo..hi) sc += 5
+                }
+            }
+            if (sc > best) best = sc
+        }
+        return best
+    }
+
     private fun isDashes(roi: Mat): Boolean {
         val cols = roi.cols(); val rows = roi.rows()
         if (cols < 4 || rows < 4) return true
