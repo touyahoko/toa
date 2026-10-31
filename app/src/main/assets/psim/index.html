@@ -98,15 +98,19 @@ main {
   color: #348FF9 !important;
   background: #090C13 !important;
 }
+/* 未選択 */
 .seg label, .chip {
   background: #222832 !important;
   border-color: #2A303C !important;
   color: #F5F7FA !important;
+  font-weight: 400 !important;
 }
-.seg input:checked + label,
-.seg label:has(+ input:checked) {
+/* 選択中のみ（input:checked の直後の label だけ） */
+.seg input:checked + label {
   background: #348FF9 !important;
-  color: #fff !important;
+  border-color: #348FF9 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
 }
 /* 結果カード系 */
 .resultcard, .armorsample {
