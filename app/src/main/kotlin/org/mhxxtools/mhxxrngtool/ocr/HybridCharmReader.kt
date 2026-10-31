@@ -8,8 +8,8 @@ import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
 
 /**
- * 公式 mhxx-renkin-reader（WASM）を優先し、ローカル見本照合は補助。
- * ローカルが「笛+0」のような弱い誤認でも WASM が正しければそちらを採用する。
+ * 公式 WASM（mhxx-renkin-reader）を最優先。
+ * ローカル見本照合は WASM 失敗時のフォールバックのみ。
  */
 object HybridCharmReader {
     private const val TAG = "HybridCharm"
@@ -23,36 +23,30 @@ object HybridCharmReader {
     ): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
-                // 両方試す（ローカルが弱くても WASM を捨てない）
-                val local = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
+                // 1) 公式 WASM を先に実行
                 val wasm = try {
                     RenkinWasmBridge.read(context, bitmap)
                 } catch (e: Exception) {
-                    Log.w(TAG, "wasm failed: ${e.message}")
+                    Log.w(TAG, "wasm error: ${e.message}")
                     null
                 }
+                val wasmOk = wasm != null && isStrong(wasm.charm)
 
-                fun quality(c: OcrCharm?): Int {
-                    if (c == null || c.skills.isEmpty()) return -1
-                    // ポイント0だけの弱い結果は大幅減点
-                    val pts = c.skills.sumOf { maxOf(it.pts, 0) }
-                    val zeroPenalty = if (pts == 0) -50 else 0
-                    return c.skills.size * 30 + pts + (if (c.slots in 0..3) 5 else 0) + zeroPenalty
-                }
+                // 2) WASM が弱い/失敗のときだけローカル
+                val local = if (!wasmOk) {
+                    RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
+                } else null
+                val localOk = local != null && isStrong(local.charm)
 
-                val lq = quality(local?.charm)
-                val wq = quality(wasm?.charm)
-                Log.i(TAG, "quality local=$lq (${local?.note}) wasm=$wq (${wasm?.note})")
+                Log.i(TAG, "wasmOk=$wasmOk (${wasm?.note}) localOk=$localOk (${local?.note})")
 
                 val base = when {
-                    wq > lq -> wasm
-                    lq > wq -> local
-                    wq >= 0 -> wasm ?: local
-                    lq >= 0 -> local
-                    else -> null
-                } ?: error(
-                    "テンプレ未認識\nlocal=${local?.note}\nwasm=${wasm?.note}"
-                )
+                    wasmOk -> wasm!!
+                    localOk -> local!!
+                    wasm != null && wasm.charm.skills.isNotEmpty() -> wasm
+                    local != null && local.charm.skills.isNotEmpty() -> local
+                    else -> error("認識失敗\nwasm=${wasm?.note}\nlocal=${local?.note}")
+                }
 
                 val source = if (base === wasm) "wasm" else "renkin"
                 val autoKind = detectKind(base.charm)
@@ -63,15 +57,24 @@ object HybridCharmReader {
                 }
                 val kindNames = listOf("風化", "古び", "光る", "なぞ")
                 val kindLabel = kindNames.getOrNull(kind) ?: "不明"
-
                 val charm = if (kind in 0..3) {
                     OcrCharm(kind, base.charm.slots, base.charm.skills)
-                } else {
-                    base.charm
-                }
+                } else base.charm
+
                 Result(charm, "$source kind=$kindLabel ${base.note}", base.confidence)
             }
         }
+
+    /** 笛+0 のような弱い結果を除外 */
+    private fun isStrong(c: OcrCharm): Boolean {
+        if (c.skills.isEmpty()) return false
+        val pts = c.skills.sumOf { it.pts }
+        // 全スキルポイント0はほぼ誤認
+        if (pts <= 0) return false
+        // スキル1は必須
+        if (c.skills[0].pts <= 0 && c.skills.size == 1) return false
+        return true
+    }
 
     fun detectKind(charm: OcrCharm): Int {
         if (charm.skills.isEmpty()) return -1
@@ -82,9 +85,7 @@ object HybridCharmReader {
             if (sc > 0) cands += Cand(k, sc)
         }
         if (cands.isEmpty()) return -1
-        val best = cands.maxBy { it.score }
-        Log.i(TAG, "detectKind ${cands.map { "${it.kind}:${it.score}" }} -> ${best.kind}")
-        return best.kind
+        return cands.maxBy { it.score }.kind
     }
 
     private fun scoreKind(skills: List<OcrSkill>, kind: Int): Int {

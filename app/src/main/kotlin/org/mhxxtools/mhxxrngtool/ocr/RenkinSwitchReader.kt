@@ -47,7 +47,7 @@ object RenkinSwitchReader {
     private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
     private const val SLOT_SEARCH = 4
 
-    private const val SKILL_MIN = 0.42
+    private const val SKILL_MIN = 0.48
     private const val GOSEKI_MIN = 0.35
 
     /** 護石アイコン ROI（タイトル左）。種類自動判定用 */
@@ -230,11 +230,18 @@ object RenkinSwitchReader {
             mx.release()
 
             val skills = mutableListOf<OcrSkill>()
-            if (s1Id != null && s1Sc >= SKILL_MIN) {
-                skills += OcrSkill(s1Id, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, (p1 ?: 0).coerceIn(0, 20))
+            // 弱い誤認（笛+0 等）を結果に載せない。ポイント未読でスコアも低い場合は空にする
+            val s1Ok = s1Id != null && s1Sc >= SKILL_MIN && (p1 != null && p1 > 0 || s1Sc >= 0.62)
+            val s2Ok = !skill2Empty && s2Id != null && s2Sc >= SKILL_MIN && (p2 != null && p2 > 0 || s2Sc >= 0.62)
+            if (s1Ok) {
+                skills += OcrSkill(s1Id!!, SKILL_NAMES.getOrElse(s1Id) { "s$s1Id" }, (p1 ?: 0).coerceIn(0, 20))
             }
-            if (!skill2Empty && s2Id != null && s2Sc >= SKILL_MIN) {
-                skills += OcrSkill(s2Id, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
+            if (s2Ok) {
+                skills += OcrSkill(s2Id!!, SKILL_NAMES.getOrElse(s2Id) { "s$s2Id" }, (p2 ?: 0).coerceIn(0, 20))
+            }
+            // スキル1が弱いのにスキル2だけあるのは不自然 → 破棄
+            if (skills.isEmpty() || (!s1Ok && s2Ok)) {
+                skills.clear()
             }
 
             val outKind = when {
