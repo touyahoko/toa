@@ -49,7 +49,7 @@ object HybridCharmReader {
 
                 // Pass2: 種類ヒントで再照合。スキル数やポイントが悪化する結果は捨てる
                 if (kind in 0..3) {
-                    val local2 = RenkinSwitchReader.read(context, bitmap, preferredKind = kind)
+                    val local2 = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
                     if (local2 != null && local2.charm.skills.isNotEmpty()) {
                         fun quality(c: OcrCharm): Int =
                             c.skills.size * 20 + c.skills.sumOf { maxOf(it.pts, 0) } + (if (c.slots in 0..3) 3 else 0)

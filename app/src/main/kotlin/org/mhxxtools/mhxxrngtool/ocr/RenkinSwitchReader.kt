@@ -38,7 +38,7 @@ object RenkinSwitchReader {
     private val NAME2 = intArrayOf(655, 194, 800, 218)
     private val PTS2 = intArrayOf(795, 194, 850, 218)
     private const val NAME_LEFT = 667
-    private const val NAME_SEARCH = 4
+    private const val NAME_SEARCH = 12
     private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247)
     private const val LABEL_SEARCH = 48
     private const val LABEL_MIN = 0.50
@@ -65,7 +65,7 @@ object RenkinSwitchReader {
         "天の護石" to 3,
     )
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.35  // note/公式: 見本範囲外の文字割合で減点（部分一致対策）
+    private const val LEFTOVER = 1.0  // 公式 LEFTOVER_PENALTY=1.0（部分一致の範囲外インク減点）
     private const val RECHECK_MARGIN = 0.22  // 1位と2位の差がこれ未満なら差分画素だけで再照合
     private const val NAME_SLACK = 2  // 見本左右の余白 (公式 NAME_SLACK)
 
@@ -433,11 +433,10 @@ object RenkinSwitchReader {
                 Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
                 val pair = matchNcc(roiTh, scaled)
                 if (pair != null) {
-                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 40) {
-                        val left = leftoverRatio(roiTh, pair.second, scaled.cols())
-                        val adj = pair.first - LEFTOVER * left
-                        cands += Cand(tmpl.id, adj, scaled.cols())
-                    }
+                    val left = leftoverRatio(roiTh, pair.second, scaled.cols())
+                    var adj = pair.first - LEFTOVER * left
+                    if (pair.second in preferLeft..preferRight) adj += 0.02
+                    cands += Cand(tmpl.id, adj, scaled.cols())
                 }
                 scaled.release()
             }
@@ -506,12 +505,12 @@ object RenkinSwitchReader {
                 Imgproc.resize(tmpl.mat, scaled, Size(tw.toDouble(), th.toDouble()))
                 val pair = matchNcc(roiTh, scaled)
                 if (pair != null) {
-                    // 左揃え付近、または幅のある見本（長いスキル名）
-                    if (pair.second in preferLeft..preferRight || tmpl.mat.cols() >= 40) {
-                        val left = leftoverRatio(roiTh, pair.second, scaled.cols())
-                        val adj = pair.first - LEFTOVER * left
-                        cands += Cand(tmpl.id, adj, pair.second, scaled.cols())
-                    }
+                    // 公式どおり: 全位置の候補を受け、範囲外インク減点で短い誤マッチを落とす
+                    val left = leftoverRatio(roiTh, pair.second, scaled.cols())
+                    var adj = pair.first - LEFTOVER * left
+                    // 左揃え付近はわずかに加点（公式の x_range 相当）
+                    if (pair.second in preferLeft..preferRight) adj += 0.02
+                    cands += Cand(tmpl.id, adj, pair.second, scaled.cols())
                 }
                 scaled.release()
             }
