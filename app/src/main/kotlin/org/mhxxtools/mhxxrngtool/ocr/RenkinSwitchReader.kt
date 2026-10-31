@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
 import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
 import org.opencv.core.Core
+import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
@@ -64,7 +65,9 @@ object RenkinSwitchReader {
         "天の護石" to 3,
     )
     private const val DIGIT_MIN = 0.35
-    private const val LEFTOVER = 1.15
+    private const val LEFTOVER = 1.35  // note/公式: 見本範囲外の文字割合で減点（部分一致対策）
+    private const val RECHECK_MARGIN = 0.22  // 1位と2位の差がこれ未満なら差分画素だけで再照合
+    private const val NAME_SLACK = 2  // 見本左右の余白 (公式 NAME_SLACK)
 
     private data class Tmpl(val id: Int, val mat: Mat)
 
@@ -183,18 +186,37 @@ object RenkinSwitchReader {
                     s2Id = one.first
                     s2Sc = one.second
                 } else {
-                    val valid = picks.filter { it.kindFit > 0 }
-                    // 種類に通る候補が1つでもあれば、通らない候補は絶対に選ばない
+                    val valid = picks.filter { it.kindFit > 0 }.toMutableList()
+                    // note方式: 上位が僅差なら差分再照合で入れ替え
+                    fun recheckPicks(list: List<Pick>): List<Pick> {
+                        if (list.size < 2) return list
+                        val sorted = list.sortedByDescending { it.sc }
+                        val a = sorted[0]; val b = sorted[1]
+                        if (a.sc - b.sc >= RECHECK_MARGIN) return list
+                        val ta = findTmpl(a.id); val tb = findTmpl(b.id)
+                        if (ta == null || tb == null) return list
+                        val rr = recheckPair(name2, ta, tb) ?: return list
+                        return if (rr.second > rr.first) {
+                            list.map {
+                                when (it.id) {
+                                    a.id -> it.copy(sc = rr.first)
+                                    b.id -> it.copy(sc = rr.second + 0.001)
+                                    else -> it
+                                }
+                            }
+                        } else list
+                    }
+                    val valid2 = recheckPicks(if (valid.isNotEmpty()) valid else picks)
+                    val pool = if (valid.isNotEmpty()) valid2.filter { it.kindFit > 0 }.ifEmpty { valid2 } else valid2
                     val chosen = if (valid.isNotEmpty()) {
-                        valid.maxByOrNull { it.kindFit * 1000.0 + it.sc }!!
+                        pool.maxByOrNull { it.kindFit * 1000.0 + it.sc }!!
                     } else {
-                        // 全滅時: スキル1の種類テーブル上の skill2 だけに限定して最高スコア
                         val allow = mutableSetOf<Int>()
                         for (k in kindsS1.ifEmpty { listOf(0, 1, 2, 3) }) {
                             KIND_TABLES[k]?.skill2?.let { allow.addAll(it.toList()) }
                         }
-                        val restricted = picks.filter { it.id in allow }
-                        (restricted.ifEmpty { picks }).maxByOrNull { it.sc }!!
+                        val restricted = pool.filter { it.id in allow }
+                        (restricted.ifEmpty { pool }).maxByOrNull { it.sc }!!
                     }
                     s2Id = chosen.id
                     s2Sc = chosen.sc
@@ -510,7 +532,45 @@ object RenkinSwitchReader {
             if (longer.isNotEmpty()) {
                 best = longer.maxByOrNull { it.score * 100.0 + it.width * 0.25 }!!
             }
-            // 既知混同ペア: スコア僅差なら長い方・専用見本を優先
+            // note/公式: 1位と2位が近ければ差分画素だけで再照合
+            if (top.size >= 2 && top[0].score - top[1].score < RECHECK_MARGIN) {
+                val t0 = findTmpl(top[0].id)
+                val t1 = findTmpl(top[1].id)
+                if (t0 != null && t1 != null) {
+                    val rr = recheckPair(roiTh, t0, t1)
+                    if (rr != null) {
+                        val (s0, s1) = rr
+                        if (s1 > s0) {
+                            best = top[1]
+                            android.util.Log.i(TAG, "recheck swap ${top[0].id}->${top[1].id} ($s0 < $s1)")
+                        } else {
+                            android.util.Log.i(TAG, "recheck keep ${top[0].id} ($s0 >= $s1)")
+                        }
+                    }
+                }
+            }
+            // 既知混同ペアも再照合
+            for ((wrong, right) in CONFUSION_PAIRS) {
+                val w = top.firstOrNull { it.id == wrong } ?: continue
+                val r = top.firstOrNull { it.id == right }
+                val rSc = r?.score ?: matchSkillForceId(roiTh, right)
+                if (rSc == null) continue
+                if (best.id == wrong && rSc >= w.score - RECHECK_MARGIN) {
+                    val tw = findTmpl(wrong); val tr = findTmpl(right)
+                    if (tw != null && tr != null) {
+                        val rr = recheckPair(roiTh, tw, tr)
+                        if (rr != null && rr.second >= rr.first) {
+                            best = r ?: best.copy(id = right, score = rSc)
+                            android.util.Log.i(TAG, "confusion recheck $wrong->$right")
+                        } else if (r != null && r.width >= w.width + 4) {
+                            // 余り減点後も幅が広い側を優先（強撃瓶追加は重撃弾強化より長い）
+                            best = r
+                        }
+                    } else if (r != null && r.score >= w.score - 0.12) {
+                        best = r
+                    }
+                }
+            }
             best = resolveConfusion(top.map { it.id to it.score }, best.id to best.score).let { (id, sc) ->
                 top.firstOrNull { it.id == id } ?: best.copy(id = id, score = sc)
             }
@@ -685,13 +745,19 @@ object RenkinSwitchReader {
         }
     }
 
-    private fun leftoverRatio(roi: Mat, matchX: Int, tmplW: Int): Double {
+    /**
+     * 公式・note記事どおり:
+     * 「見本が当たった範囲の外に文字がどれだけ残っているか」を列ごとのインクで数える。
+     * 短い見本が長いスキル名の一部に当たったとき、両側の文字で減点される。
+     */
+    private fun leftoverRatio(roi: Mat, matchX: Int, tmplW: Int, slack: Int = NAME_SLACK): Double {
         val cols = roi.cols(); val rows = roi.rows()
         val data = ByteArray(cols * rows)
         roi.get(0, 0, data)
-        var total = 0; var outside = 0
-        val left = (matchX - 2).coerceAtLeast(0)
-        val right = (matchX + tmplW + 2).coerceAtMost(cols)
+        var total = 0
+        var outside = 0
+        val left = (matchX - slack).coerceAtLeast(0)
+        val right = (matchX + tmplW + slack).coerceAtMost(cols)
         for (x in 0 until cols) {
             var ink = 0
             for (y in 0 until rows) if ((data[y * cols + x].toInt() and 0xFF) > 30) ink++
@@ -700,6 +766,86 @@ object RenkinSwitchReader {
         }
         return if (total == 0) 0.0 else outside.toDouble() / total
     }
+
+    /**
+     * 1位と2位が近いとき、2つの見本で「画素が違うところ」だけで相関を取り直す（公式 recheck）。
+     * 似たスキル名（強撃瓶追加 vs 重撃弾強化 等）の取り違えを減らす。
+     */
+    private fun recheckPair(roi: Mat, tmplA: Mat, tmplB: Mat): Pair<Double, Double>? {
+        if (tmplA.empty() || tmplB.empty()) return null
+        // 両見本を ROI 高さに合わせてスケール
+        fun fit(t: Mat): Mat {
+            val sc = minOf(
+                roi.rows().toDouble() / t.rows().coerceAtLeast(1),
+                roi.cols().toDouble() / t.cols().coerceAtLeast(1),
+                1.05
+            )
+            val tw = (t.cols() * sc).toInt().coerceAtLeast(1)
+            val th = (t.rows() * sc).toInt().coerceAtLeast(1)
+            if (th > roi.rows() || tw > roi.cols()) return Mat()
+            val out = Mat()
+            Imgproc.resize(t, out, Size(tw.toDouble(), th.toDouble()))
+            return out
+        }
+        val a = fit(tmplA)
+        val b = fit(tmplB)
+        if (a.empty() || b.empty()) { a.release(); b.release(); return null }
+        val ma = matchNcc(roi, a) ?: run { a.release(); b.release(); return null }
+        val mb = matchNcc(roi, b) ?: run { a.release(); b.release(); return null }
+        // 差分マスク: 各見本を配置したインクの XOR 付近
+        val ca = Mat.zeros(roi.size(), CvType.CV_8UC1)
+        val cb = Mat.zeros(roi.size(), CvType.CV_8UC1)
+        val ra = roi.rows(); val rca = a.rows(); val cca = a.cols()
+        val rcb = b.rows(); val ccb = b.cols()
+        val xa = ma.second.coerceIn(0, roi.cols() - cca)
+        val xb = mb.second.coerceIn(0, roi.cols() - ccb)
+        val ya = ((ra - rca) / 2).coerceAtLeast(0)
+        val yb = ((ra - rcb) / 2).coerceAtLeast(0)
+        val subA = ca.submat(ya, (ya + rca).coerceAtMost(ra), xa, (xa + cca).coerceAtMost(roi.cols()))
+        val subB = cb.submat(yb, (yb + rcb).coerceAtMost(ra), xb, (xb + ccb).coerceAtMost(roi.cols()))
+        val aCrop = a.submat(0, subA.rows(), 0, subA.cols())
+        val bCrop = b.submat(0, subB.rows(), 0, subB.cols())
+        aCrop.copyTo(subA); bCrop.copyTo(subB)
+        // 二値化して XOR
+        val ba = Mat(); val bb = Mat()
+        Imgproc.threshold(ca, ba, 30.0, 255.0, Imgproc.THRESH_BINARY)
+        Imgproc.threshold(cb, bb, 30.0, 255.0, Imgproc.THRESH_BINARY)
+        val diff = Mat()
+        Core.bitwise_xor(ba, bb, diff)
+        val kernel = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0))
+        val mask = Mat()
+        Imgproc.dilate(diff, mask, kernel)
+        // マスク上だけで正規化相関に近い指標
+        fun maskedCorr(tmpl: Mat, x0: Int, y0: Int): Double {
+            var sumR = 0.0; var sumT = 0.0; var sumRR = 0.0; var sumTT = 0.0; var sumRT = 0.0; var n = 0
+            val rd = ByteArray(roi.cols() * roi.rows())
+            val md = ByteArray(mask.cols() * mask.rows())
+            val td = ByteArray(tmpl.cols() * tmpl.rows())
+            roi.get(0, 0, rd); mask.get(0, 0, md); tmpl.get(0, 0, td)
+            for (y in 0 until roi.rows()) {
+                for (x in 0 until roi.cols()) {
+                    if ((md[y * mask.cols() + x].toInt() and 0xFF) < 128) continue
+                    val rv = (rd[y * roi.cols() + x].toInt() and 0xFF).toDouble()
+                    val lx = x - x0; val ly = y - y0
+                    val tv = if (lx in 0 until tmpl.cols() && ly in 0 until tmpl.rows())
+                        (td[ly * tmpl.cols() + lx].toInt() and 0xFF).toDouble() else 0.0
+                    sumR += rv; sumT += tv; sumRR += rv * rv; sumTT += tv * tv; sumRT += rv * tv; n++
+                }
+            }
+            if (n < 8) return -1.0
+            val nf = n.toDouble()
+            val num = sumRT - sumR * sumT / nf
+            val den = kotlin.math.sqrt((sumRR - sumR * sumR / nf).coerceAtLeast(1e-6) * (sumTT - sumT * sumT / nf).coerceAtLeast(1e-6))
+            return if (den < 1e-6) -1.0 else (num / den)
+        }
+        val sa = maskedCorr(a, xa, ya)
+        val sb = maskedCorr(b, xb, yb)
+        a.release(); b.release(); ca.release(); cb.release(); ba.release(); bb.release(); diff.release(); mask.release(); kernel.release()
+        if (sa < 0 || sb < 0) return null
+        return sa to sb
+    }
+
+    private fun findTmpl(id: Int): Mat? = skillTmpls.firstOrNull { it.id == id }?.mat
 
     /** 公式 is_dashes */
 
