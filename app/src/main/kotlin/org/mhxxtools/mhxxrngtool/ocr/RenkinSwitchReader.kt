@@ -151,13 +151,32 @@ object RenkinSwitchReader {
             var s2Id: Int? = null
             var s2Sc: Double = -1.0
             if (!skill2Empty) {
-                // 全スキルから上位を取り、種類妥当性で最終決定（候補除外はしない）
-                val top = matchSkillRanked(name2, preferredKind = -1, topN = 15)
+                // 全スキル上位 + 混同ペア強制照合。種類妥当性を最優先。
+                val top = matchSkillRanked(name2, preferredKind = -1, topN = 20).toMutableList()
+                // 既知の取り違えペアを必ず候補に入れる（見本が弱くても再照合）
+                for (alt in confusionAlternatives(top.map { it.first })) {
+                    val sc = matchSkillForceId(name2, alt) ?: continue
+                    if (top.none { it.first == alt }) top += alt to sc
+                    else {
+                        val i = top.indexOfFirst { it.first == alt }
+                        if (sc > top[i].second) top[i] = alt to sc
+                    }
+                }
+                // スキル1が通る種類の skill2 も一通り候補化
+                val kindsS1 = possibleKindsForSkill1(s1Id, p1 ?: -1)
+                for (k in kindsS1.ifEmpty { listOf(0, 1, 2, 3) }) {
+                    val tbl = KIND_TABLES[k] ?: continue
+                    for (id in tbl.skill2) {
+                        if (top.any { it.first == id }) continue
+                        val sc = matchSkillForceId(name2, id) ?: continue
+                        if (sc >= SKILL_MIN - 0.18) top += id to sc
+                    }
+                }
                 val (p2tmp, _) = matchDigit(pts2)
                 val p2val = p2tmp ?: -1
                 data class Pick(val id: Int, val sc: Double, val kindFit: Int)
                 val picks = top
-                    .filter { it.second >= SKILL_MIN - 0.15 }
+                    .filter { it.second >= SKILL_MIN - 0.20 }
                     .map { (id, sc) -> Pick(id, sc, kindFitScore(s1Id, p1 ?: -1, id, p2val)) }
                 if (picks.isEmpty()) {
                     val one = matchSkill(name2, -1)
@@ -165,14 +184,21 @@ object RenkinSwitchReader {
                     s2Sc = one.second
                 } else {
                     val valid = picks.filter { it.kindFit > 0 }
+                    // 種類に通る候補が1つでもあれば、通らない候補は絶対に選ばない
                     val chosen = if (valid.isNotEmpty()) {
                         valid.maxByOrNull { it.kindFit * 1000.0 + it.sc }!!
                     } else {
-                        picks.maxByOrNull { it.sc }!!
+                        // 全滅時: スキル1の種類テーブル上の skill2 だけに限定して最高スコア
+                        val allow = mutableSetOf<Int>()
+                        for (k in kindsS1.ifEmpty { listOf(0, 1, 2, 3) }) {
+                            KIND_TABLES[k]?.skill2?.let { allow.addAll(it.toList()) }
+                        }
+                        val restricted = picks.filter { it.id in allow }
+                        (restricted.ifEmpty { picks }).maxByOrNull { it.sc }!!
                     }
                     s2Id = chosen.id
                     s2Sc = chosen.sc
-                    Log.i(TAG, "skill2 open picks=${picks.size} valid=${valid.size} pick=${chosen.id} sc=${"%.3f".format(chosen.sc)} fit=${chosen.kindFit}")
+                    Log.i(TAG, "skill2 picks=${picks.size} valid=${valid.size} pick=${chosen.id} sc=${"%.3f".format(chosen.sc)} fit=${chosen.kindFit}")
                 }
             }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
@@ -476,18 +502,62 @@ object RenkinSwitchReader {
         // 短い誤マッチ（特殊攻撃→精密射撃の一部 等）を幅で落とす
         var best = ranked[0]
         if (ranked.size > 1) {
-            val top = ranked.take(20)
+            val top = ranked.take(25)
             best = top.maxByOrNull { c -> c.score * 100.0 + c.width * 0.15 }!!
             val a = ranked[0]
             // 長いスキル名: 幅が明らかに広い見本がスコア僅差なら採用
-            // （重撃弾強化 vs 強撃瓶追加 など「撃」共通の取り違え対策）
-            val longer = top.filter { it.width >= a.width + 8 && it.score >= a.score - 0.20 }
+            val longer = top.filter { it.width >= a.width + 6 && it.score >= a.score - 0.22 }
             if (longer.isNotEmpty()) {
-                best = longer.maxByOrNull { it.score * 100.0 + it.width * 0.20 }!!
+                best = longer.maxByOrNull { it.score * 100.0 + it.width * 0.25 }!!
+            }
+            // 既知混同ペア: スコア僅差なら長い方・専用見本を優先
+            best = resolveConfusion(top.map { it.id to it.score }, best.id to best.score).let { (id, sc) ->
+                top.firstOrNull { it.id == id } ?: best.copy(id = id, score = sc)
             }
         }
         if (best.score < SKILL_MIN) return null to best.score
         return best.id to best.score
+    }
+
+    /**
+     * 取り違えやすいスキルIDペア。
+     * 50=重撃弾強化 ↔ 59=強撃瓶追加
+     * 32=特殊攻撃 ↔ 46=精密射撃
+     * 70=痛撃 ↔ 120=採取
+     */
+    private val CONFUSION_PAIRS = listOf(
+        50 to 59,
+        32 to 46,
+        70 to 120,
+        48 to 59, // 散弾強化 など「撃」系
+    )
+
+    private fun confusionAlternatives(ids: List<Int>): List<Int> {
+        val out = linkedSetOf<Int>()
+        for ((a, b) in CONFUSION_PAIRS) {
+            if (a in ids) out += b
+            if (b in ids) out += a
+        }
+        // 常に追加スキル側も試す
+        out += 59
+        out += 46
+        out += 120
+        return out.toList()
+    }
+
+    private fun resolveConfusion(cands: List<Pair<Int, Double>>, best: Pair<Int, Double>): Pair<Int, Double> {
+        var (bid, bsc) = best
+        for ((wrong, right) in CONFUSION_PAIRS) {
+            val w = cands.firstOrNull { it.first == wrong }
+            val r = cands.firstOrNull { it.first == right }
+            if (w == null || r == null) continue
+            // 正解側がスコア -0.18 以内なら正解側を採用（僅差の取り違えを修正）
+            if (bid == wrong && r.second >= w.second - 0.18) {
+                bid = right
+                bsc = r.second
+            }
+        }
+        return bid to bsc
     }
 
     /** ROI 内のインク外接矩形で切り詰め（短いスキルと長いスキルの公平な照合用） */
