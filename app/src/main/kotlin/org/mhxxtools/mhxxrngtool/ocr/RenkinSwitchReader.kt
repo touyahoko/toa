@@ -123,13 +123,15 @@ object RenkinSwitchReader {
             }
 
             val (gosekiKind, gosekiName) = matchGosekiKind(mx)
-            val kindForMatch = when {
+            // 種類はヒントのみ。スキル照合はまず全スキル自然照合する
+            // （護石アイコン誤判定で候補が削られ、精密射撃・採取などが落ちるのを防ぐ）
+            val kindHint = when {
                 preferredKind in 0..3 -> preferredKind
                 gosekiKind in 0..3 -> gosekiKind
                 else -> -1
             }
             if (gosekiName.isNotEmpty()) {
-                Log.i(TAG, "using goseki kind=$kindForMatch ($gosekiName)")
+                Log.i(TAG, "goseki=$gosekiName hintKind=$kindHint (skill match unrestricted first)")
             }
 
             val name1 = tophatRegion(mx, NAME1)
@@ -137,37 +139,28 @@ object RenkinSwitchReader {
             val name2 = tophatRegion(mx, NAME2)
             val pts2 = tophatRegion(mx, PTS2)
 
-            val (s1Id, s1Sc) = matchSkill(name1, kindForMatch)
+            // スキル1: 全スキル照合を主、種類ヒントはスコアが近い場合のみ採用
+            val (s1Open, s1OpenSc) = matchSkill(name1, -1)
+            val (s1Hint, s1HintSc) = if (kindHint in 0..3) matchSkill(name1, kindHint) else null to -1.0
+            val (s1Id, s1Sc) = when {
+                s1Hint != null && s1HintSc >= SKILL_MIN && s1HintSc + 0.03 >= s1OpenSc -> s1Hint to s1HintSc
+                else -> s1Open to s1OpenSc
+            }
             val (p1, p1Sc) = matchDigit(pts1)
             val skill2Empty = isDashes(name2)
             var s2Id: Int? = null
             var s2Sc: Double = -1.0
             if (!skill2Empty) {
-                // スキル1が通る種類に出るスキル2だけ照合（全スキル対戦で50が独占するのを防ぐ）
-                // 達人+4 → 光る/なぞ → 59は候補、50は候補外
-                val kindsFromS1 = possibleKindsForSkill1(s1Id, p1 ?: -1)
-                val kinds = when {
-                    kindForMatch in 0..3 -> listOf(kindForMatch)
-                    kindsFromS1.isNotEmpty() -> kindsFromS1
-                    else -> listOf(0, 1, 2, 3)
-                }
-                val allowS2 = mutableSetOf<Int>()
-                for (k in kinds) {
-                    val tbl = KIND_TABLES[k] ?: continue
-                    allowS2.addAll(tbl.skill2.toList())
-                }
+                // 全スキルから上位を取り、種類妥当性で最終決定（候補除外はしない）
+                val top = matchSkillRanked(name2, preferredKind = -1, topN = 15)
                 val (p2tmp, _) = matchDigit(pts2)
                 val p2val = p2tmp ?: -1
                 data class Pick(val id: Int, val sc: Double, val kindFit: Int)
-                val picks = mutableListOf<Pick>()
-                for (id in allowS2) {
-                    val sc = matchSkillForceId(name2, id) ?: continue
-                    if (sc < SKILL_MIN - 0.12) continue
-                    val fit = kindFitScore(s1Id, p1 ?: -1, id, p2val)
-                    picks += Pick(id, sc, fit)
-                }
+                val picks = top
+                    .filter { it.second >= SKILL_MIN - 0.15 }
+                    .map { (id, sc) -> Pick(id, sc, kindFitScore(s1Id, p1 ?: -1, id, p2val)) }
                 if (picks.isEmpty()) {
-                    val one = matchSkill(name2, kindForMatch)
+                    val one = matchSkill(name2, -1)
                     s2Id = one.first
                     s2Sc = one.second
                 } else {
@@ -179,7 +172,7 @@ object RenkinSwitchReader {
                     }
                     s2Id = chosen.id
                     s2Sc = chosen.sc
-                    Log.i(TAG, "skill2 kinds=$kinds allow=${allowS2.size} goseki=$gosekiName pick=${chosen.id} sc=${"%.3f".format(chosen.sc)} fit=${chosen.kindFit}")
+                    Log.i(TAG, "skill2 open picks=${picks.size} valid=${valid.size} pick=${chosen.id} sc=${"%.3f".format(chosen.sc)} fit=${chosen.kindFit}")
                 }
             }
             val (p2, p2Sc) = if (skill2Empty) null to 1.0 else matchDigit(pts2)
@@ -197,7 +190,7 @@ object RenkinSwitchReader {
             }
 
             val outKind = when {
-                kindForMatch in 0..3 -> kindForMatch
+                kindHint in 0..3 -> kindHint
                 gosekiKind in 0..3 -> gosekiKind
                 else -> -1
             }

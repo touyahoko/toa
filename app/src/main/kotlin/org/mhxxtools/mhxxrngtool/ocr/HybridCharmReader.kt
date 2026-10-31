@@ -47,14 +47,19 @@ object HybridCharmReader {
                 val kindNames = listOf("風化", "古び", "光る", "なぞ")
                 val kindLabel = kindNames.getOrNull(kind) ?: "不明"
 
-                // Pass2: 種類が分かればその種類の見本だけで再照合（自然スコア）
+                // Pass2: 種類ヒントで再照合。スキル数やポイントが悪化する結果は捨てる
                 if (kind in 0..3) {
                     val local2 = RenkinSwitchReader.read(context, bitmap, preferredKind = kind)
                     if (local2 != null && local2.charm.skills.isNotEmpty()) {
-                        val fixed = OcrCharm(kind, local2.charm.slots, local2.charm.skills)
-                        val note = "$source→kind=$kindLabel ${local2.note}"
-                        Log.i(TAG, note)
-                        return@runCatching Result(fixed, note, local2.confidence)
+                        fun quality(c: OcrCharm): Int =
+                            c.skills.size * 20 + c.skills.sumOf { maxOf(it.pts, 0) } + (if (c.slots in 0..3) 3 else 0)
+                        if (quality(local2.charm) >= quality(base.charm)) {
+                            val fixed = OcrCharm(kind, local2.charm.slots, local2.charm.skills)
+                            val note = "$source→kind=$kindLabel ${local2.note}"
+                            Log.i(TAG, note)
+                            return@runCatching Result(fixed, note, local2.confidence)
+                        }
+                        Log.i(TAG, "pass2 worse, keep pass1")
                     }
                     return@runCatching Result(
                         OcrCharm(kind, base.charm.slots, base.charm.skills),
