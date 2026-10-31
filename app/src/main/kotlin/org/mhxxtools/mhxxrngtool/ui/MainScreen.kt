@@ -37,8 +37,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import org.mhxxtools.mhxxrngtool.AppStateViewModel
 import org.mhxxtools.mhxxrngtool.rng.KIND_NAMES
-import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointScreen
-import org.mhxxtools.mhxxrngtool.ui.aimpoint.AimPointViewModel
 import org.mhxxtools.mhxxrngtool.ui.around.AroundScreen
 import org.mhxxtools.mhxxrngtool.ui.around.AroundViewModel
 import org.mhxxtools.mhxxrngtool.ui.combo.ComboScreen
@@ -54,10 +52,9 @@ import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
 import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryViewModel
 import org.mhxxtools.mhxxrngtool.ui.settings.SettingsScreen
-import org.mhxxtools.mhxxrngtool.ui.psim.SkillSimScreen
 import android.net.Uri
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "狙い目", "鑑定", "タイマー", "シミュ")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "鑑定", "タイマー")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -65,7 +62,6 @@ fun MainScreen(appState: AppStateViewModel) {
     val aroundVm: AroundViewModel = viewModel()
     val comboVm: ComboViewModel = viewModel()
     val rewardVm: RewardViewModel = viewModel()
-    val aimVm: AimPointViewModel = viewModel()
     val ocrVm: OcrViewModel = viewModel()
     val timerVm: TimerViewModel = viewModel()
     val galleryVm: GalleryViewModel = viewModel()
@@ -176,7 +172,7 @@ fun MainScreen(appState: AppStateViewModel) {
                     onResultTap = { frame ->
                         aroundVm.setFrame(frame)
                         timerVm.applyTargetFromSearch(frame)
-                        selectedTab = 6
+                        selectedTab = 5
                     }
                 )
                 1 -> AroundScreen(vm = aroundVm, kind = appState.kind)
@@ -184,12 +180,11 @@ fun MainScreen(appState: AppStateViewModel) {
                     vm = comboVm,
                     onResultTap = { frame ->
                         timerVm.setCurrentPosFrame(frame)
-                        selectedTab = 6
+                        selectedTab = 5
                     }
                 )
                 3 -> RewardScreen(vm = rewardVm, kind = appState.kind)
-                4 -> AimPointScreen(vm = aimVm, kind = appState.kind)
-                5 -> OcrScreen(
+                4 -> OcrScreen(
                     vm = ocrVm,
                     kind = appState.kind,
                     onApplyToSearch = { data ->
@@ -203,11 +198,10 @@ fun MainScreen(appState: AppStateViewModel) {
                     },
                     onFrameTap = { frame ->
                         timerVm.applyTargetFromSearch(frame)
-                        selectedTab = 6
+                        selectedTab = 5
                     }
                 )
-                6 -> TimerScreen(vm = timerVm)
-                7 -> SkillSimScreen()
+                5 -> TimerScreen(vm = timerVm)
             }
             if (showSettings) {
                 Box(
@@ -222,7 +216,7 @@ fun MainScreen(appState: AppStateViewModel) {
                         onUseImage = { uri ->
                             showSettings = false
                             ocrVm.recognizeFromUri(context, uri, appState.kind)
-                            selectedTab = 5
+                            selectedTab = 4
                         },
                         onUseVideo = { uri ->
                             showSettings = false

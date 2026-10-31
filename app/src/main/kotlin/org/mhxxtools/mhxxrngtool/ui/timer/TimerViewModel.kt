@@ -40,7 +40,7 @@ data class TimerUiState(
     val remainingFrames: Long = -1L,
     val mashCount: Long = 0L,
     val remainderFrames: Long = 0L,
-    val calcSummary: String = "①調合で現在地 → ②検索で目標お守り → 自動で残り計算",
+    val calcSummary: String = "①調合で現在地F → ②検索で目標F → 残り=目標−現在地\n通常: 待機秒=残り÷30 ／ 連打: 回数=残り÷730 + 余り÷30秒",
     val appliedModeLabel: String = "",
     // ストップウォッチ（HTML こめこ版と同等）
     val swDisplay: String = "00:00.000",
@@ -70,7 +70,12 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     private var countdownTotalMsAtStart: Long = 0L
 
     companion object {
+        /** Switch お守りスナイプは 30fps 基準（動画解説どおり） */
         const val FPS = 30.0
+        /**
+         * コンテニュー連打1回あたり進むフレーム数。
+         * 残りF ÷ 730 = 連打回数、余りF ÷ 30 = 待機秒。
+         */
         const val SKIP_SIZE = 730L
     }
 
