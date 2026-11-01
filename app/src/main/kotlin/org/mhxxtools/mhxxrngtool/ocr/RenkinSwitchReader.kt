@@ -423,6 +423,7 @@ object RenkinSwitchReader {
         } else null
         for (tmpl in skillTmpls) {
             if (allowedIds != null && tmpl.id !in allowedIds) continue
+            if (allowedIds == null && !SkillCatalog.isMatchCandidate(tmpl.id)) continue
             for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
@@ -495,6 +496,7 @@ object RenkinSwitchReader {
         } else null
         for (tmpl in skillTmpls) {
             if (allowedIds != null && tmpl.id !in allowedIds) continue
+            if (allowedIds == null && !SkillCatalog.isMatchCandidate(tmpl.id)) continue
             for (sc in doubleArrayOf(0.95, 0.98, 1.0, 1.02, 1.05)) {
                 var tw = (tmpl.mat.cols() * sc).toInt().coerceAtLeast(1)
                 var th = (tmpl.mat.rows() * sc).toInt().coerceAtLeast(1)
