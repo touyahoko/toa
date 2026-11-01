@@ -28,30 +28,30 @@ object RenkinSwitchReader {
 
     data class Result(val charm: OcrCharm, val note: String, val confidence: Float)
 
-    private const val SW = 1280
-    private const val SH = 720
+    private const val SW = 1170  // was 1280; match screenshot 1170x612
+    private const val SH = 612  // was 720
     private const val TOPHAT_K = 25
 
     // 公式 read.rs と同じ座標
-    private val NAME1 = intArrayOf(655, 165, 800, 191)
-    private val PTS1 = intArrayOf(795, 165, 850, 191)
-    private val NAME2 = intArrayOf(655, 194, 800, 218)
-    private val PTS2 = intArrayOf(795, 194, 850, 218)
-    private const val NAME_LEFT = 667
+    private val NAME1 = intArrayOf(599, 140, 731, 162)
+    private val PTS1 = intArrayOf(727, 140, 777, 162)
+    private val NAME2 = intArrayOf(599, 165, 731, 185)
+    private val PTS2 = intArrayOf(727, 165, 777, 185)
+    private const val NAME_LEFT = 610
     private const val NAME_SEARCH = 12
-    private val LABEL_BLOCK = intArrayOf(476, 166, 570, 247)
+    private val LABEL_BLOCK = intArrayOf(435, 141, 521, 210)
     private const val LABEL_SEARCH = 48
     private const val LABEL_MIN = 0.50
-    private val SLOT_X = intArrayOf(580, 604, 628)
-    private const val SLOT_Y = 224
-    private val SLOT_CROP = intArrayOf(-1, -2, 17, 18)
+    private val SLOT_X = intArrayOf(530, 552, 574)
+    private const val SLOT_Y = 190
+    private val SLOT_CROP = intArrayOf(-1, -2, 16, 15)
     private const val SLOT_SEARCH = 4
 
     private const val SKILL_MIN = 0.48
     private const val GOSEKI_MIN = 0.35
 
     /** 護石アイコン ROI（タイトル左）。種類自動判定用 */
-    private val GOSEKI_ICON_ROI = intArrayOf(618, 132, 700, 185)
+    private val GOSEKI_ICON_ROI = intArrayOf(565, 112, 640, 157)
     private val GOSEKI_KIND: Map<String, Int> = mapOf(
         "兵士の護石" to 0,
         "闘士の護石" to 1,

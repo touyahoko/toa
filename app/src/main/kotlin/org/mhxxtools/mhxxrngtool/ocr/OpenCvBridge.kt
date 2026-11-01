@@ -51,10 +51,10 @@ object OpenCvBridge {
     fun ensureInit(): Boolean = if (ready.get()) true else init()
 
     /**
-     * renkin-reader の型紙 (reference.png) を使って 1280x720 に射影。
+     * renkin-reader の型紙 (reference.png) を使って 1170x612 に射影。
      * ORB + RANSAC ホモグラフィ。失敗時は null。
      */
-    fun alignWithReference(srcBmp: Bitmap, referenceBmp: Bitmap, canonW: Int = 1280, canonH: Int = 720): Bitmap? {
+    fun alignWithReference(srcBmp: Bitmap, referenceBmp: Bitmap, canonW: Int = 1170, canonH: Int = 612): Bitmap? {
         if (!ensureInit()) return null
         val src = bitmapToMat(srcBmp)
         val refMat = bitmapToMat(referenceBmp)
@@ -120,11 +120,11 @@ object OpenCvBridge {
     }
 
     /**
-     * 写真を canonical (1280x720) に射影。
+     * 写真を canonical (1170x612) に射影。
      * 参照は「型紙」相当のエッジ画像をその場で生成（固定UIの輪郭）。
      * 失敗時 null。
      */
-    fun alignToCanonical(srcBmp: Bitmap, canonW: Int = 1280, canonH: Int = 720): Bitmap? {
+    fun alignToCanonical(srcBmp: Bitmap, canonW: Int = 1170, canonH: Int = 612): Bitmap? {
         if (!ensureInit()) return null
         val src = bitmapToMat(srcBmp)
         try {
