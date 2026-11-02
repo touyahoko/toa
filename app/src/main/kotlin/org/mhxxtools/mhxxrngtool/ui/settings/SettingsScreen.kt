@@ -47,6 +47,7 @@ import org.mhxxtools.mhxxrngtool.switchtransfer.GalleryItem
 import org.mhxxtools.mhxxrngtool.switchtransfer.GalleryKind
 import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
+import org.mhxxtools.mhxxrngtool.ui.hid.HidControllerSection
 
 @Composable
 fun SettingsScreen(
@@ -232,6 +233,7 @@ fun SettingsScreen(
                 Text("鑑定: 錬金リーダー方式（公式134）", fontSize = 12.sp, color = HtmlColors.Muted)
             }
         }
+        HidControllerSection()
         Spacer(Modifier.height(24.dp))
     }
 }
