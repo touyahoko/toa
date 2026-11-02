@@ -6,15 +6,14 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
-import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
 
 /**
- * 鑑定パイプライン:
- *  1) ML Kit 日本語 OCR + SKILL_NAMES 辞書マッチ（優先）
- *  2) テンプレ照合 RenkinSwitchReader
- *  3) WASM 錬金リーダー
+ * 鑑定優先順位:
+ *  1) テンプレ照合（位置・スロットが安定）
+ *  2) ROI限定 ML Kit + 辞書（スキル名の取り違え補正）
+ *  3) WASM
  *
- * 似たスキル名（強撃瓶追加 vs 重撃弾強化）は文字列辞書の方が安定しやすい。
+ * 全画面 ML Kit は廃止（別UIの文字を拾って大外れするため）。
  */
 object HybridCharmReader {
     private const val TAG = "HybridCharm"
@@ -28,25 +27,13 @@ object HybridCharmReader {
     ): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
-                // ── 1) ML Kit + 辞書 ──
-                val mlkit = try {
-                    val text = AndroidOcr.ocrBitmap(bitmap)
-                    Log.i(TAG, "mlkit text len=${text.length}: ${text.take(120).replace("\n","|")}")
-                    val charm = parseOcrCharm(text)
-                    if (charm.skills.isNotEmpty() && charm.skills.any { it.pts > 0 }) {
-                        val conf = (0.55f + charm.skills.size * 0.15f +
-                            if (charm.slots in 0..3) 0.1f else 0f).coerceAtMost(0.95f)
-                        Result(charm, "mlkit+dict skills=${charm.skills.size}", conf)
-                    } else null
+                val local = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
+                val roiMl = try {
+                    MlKitRoiReader.read(context, bitmap)
                 } catch (e: Exception) {
-                    Log.w(TAG, "mlkit: ${e.message}")
+                    Log.w(TAG, "roi mlkit: ${e.message}")
                     null
                 }
-
-                // ── 2) ローカルテンプレ ──
-                val local = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
-
-                // ── 3) WASM ──
                 val wasm = try {
                     RenkinWasmBridge.read(context, bitmap)
                 } catch (e: Exception) {
@@ -54,58 +41,104 @@ object HybridCharmReader {
                     null
                 }
 
-                fun scoreTemplate(r: RenkinSwitchReader.Result?): Int {
-                    if (r == null) return -1000
-                    val c = r.charm
-                    if (c.skills.isEmpty()) return -1000
+                fun score(c: OcrCharm?): Int {
+                    if (c == null || c.skills.isEmpty()) return -1000
                     val pts = c.skills.sumOf { it.pts }
-                    if (pts <= 0) return -500
-                    var s = c.skills.size * 30 + pts
-                    if (c.slots in 0..3) s += 5
+                    if (pts <= 0) return -400
+                    var s = c.skills.size * 40 + pts
+                    if (c.slots in 0..3) s += 15
+                    // 2スキル揃いを強く優先
+                    if (c.skills.size >= 2) s += 40
                     return s
                 }
 
-                val ls = scoreTemplate(local)
-                val ws = scoreTemplate(wasm)
-                Log.i(TAG, "score mlkit=${mlkit != null} local=$ls wasm=$ws")
+                val ls = score(local?.charm)
+                val ms = score(roiMl?.charm)
+                val ws = score(wasm?.charm)
+                Log.i(TAG, "score local=$ls mlkit-roi=$ms wasm=$ws")
 
-                // ML Kit でスキル名+ポイントが取れたら最優先
-                val base: RenkinSwitchReader.Result? = null // unused type bridge
-                val chosen: Result = when {
-                    mlkit != null && mlkit.charm.skills.size >= 1 -> {
-                        // テンプレ側に同じポイントで別スキルがいる場合は、
-                        // 辞書の正式名を優先（強撃瓶追加を守る）
-                        mlkit
+                // マージ: テンプレを土台に、ML Kit が明らかに違う正式名を出したら名前だけ差し替え
+                var merged: OcrCharm? = null
+                var note = ""
+                var conf = 0.5f
+
+                when {
+                    ls >= ms && ls >= ws && ls > -400 -> {
+                        merged = local!!.charm
+                        note = "renkin ${local.note}"
+                        conf = local.confidence
+                        // skill2 がテンプレで弱い/無いとき ROI ML の skill2 を補完
+                        if (merged.skills.size < 2 && roiMl != null && roiMl.charm.skills.size >= 2) {
+                            merged = roiMl.charm
+                            note = "mlkit-roi-fill ${roiMl.note}"
+                            conf = roiMl.confidence
+                        } else if (roiMl != null && roiMl.charm.skills.size >= 2 && merged.skills.size >= 2) {
+                            // 同位置で辞書名が異なる → 長い正式名（瓶追加等）を優先
+                            merged = mergePreferDictNames(merged, roiMl.charm)
+                            note += "+dictMerge"
+                        }
                     }
-                    ls >= ws && ls > -500 -> {
-                        val r = local!!
-                        Result(r.charm, "renkin ${r.note}", r.confidence)
+                    ms >= ws && ms > -400 -> {
+                        merged = roiMl!!.charm
+                        note = roiMl.note
+                        conf = roiMl.confidence
                     }
-                    ws > -500 -> {
-                        val r = wasm!!
-                        Result(r.charm, "wasm ${r.note}", r.confidence)
+                    ws > -400 -> {
+                        merged = wasm!!.charm
+                        note = "wasm ${wasm.note}"
+                        conf = wasm.confidence
                     }
-                    local != null && local.charm.skills.isNotEmpty() ->
-                        Result(local.charm, "renkin-fallback ${local.note}", local.confidence)
-                    wasm != null && wasm.charm.skills.isNotEmpty() ->
-                        Result(wasm.charm, "wasm-fallback ${wasm.note}", wasm.confidence)
-                    mlkit != null -> mlkit
-                    else -> error("認識失敗 mlkit/local/wasm いずれもスキルなし")
+                    local != null && local.charm.skills.isNotEmpty() -> {
+                        merged = local.charm
+                        note = "renkin-fb ${local.note}"
+                        conf = local.confidence
+                    }
+                    roiMl != null -> {
+                        merged = roiMl.charm
+                        note = "mlkit-fb ${roiMl.note}"
+                        conf = roiMl.confidence
+                    }
+                    wasm != null && wasm.charm.skills.isNotEmpty() -> {
+                        merged = wasm.charm
+                        note = "wasm-fb ${wasm.note}"
+                        conf = wasm.confidence
+                    }
+                    else -> error("認識失敗")
                 }
 
-                val autoKind = detectKind(chosen.charm)
+                val autoKind = detectKind(merged)
                 val kind = when {
                     preferredKind in 0..3 -> preferredKind
                     autoKind in 0..3 -> autoKind
                     else -> -1
                 }
                 val kindLabel = listOf("風化", "古び", "光る", "なぞ").getOrNull(kind) ?: "不明"
-                val charm = if (kind in 0..3) {
-                    OcrCharm(kind, chosen.charm.slots, chosen.charm.skills)
-                } else chosen.charm
-                Result(charm, "${chosen.note} kind=$kindLabel", chosen.confidence)
+                val charm = if (kind in 0..3) OcrCharm(kind, merged.slots, merged.skills) else merged
+                Result(charm, "$note kind=$kindLabel", conf)
             }
         }
+
+    /** テンプレ結果のポイント・スロットを保ちつつ、辞書側の正式スキル名を採用 */
+    private fun mergePreferDictNames(base: OcrCharm, dict: OcrCharm): OcrCharm {
+        val out = base.skills.toMutableList()
+        for (i in out.indices) {
+            if (i >= dict.skills.size) break
+            val b = out[i]
+            val d = dict.skills[i]
+            // ポイントが近く、名前が違う → 辞書名を採用（強撃瓶追加など）
+            if (b.globalIdx != d.globalIdx && kotlin.math.abs(b.pts - d.pts) <= 2) {
+                // 混同ペア: 50 vs 59 は辞書を優先
+                if ((b.globalIdx == 50 && d.globalIdx == 59) ||
+                    (b.globalIdx == 32 && d.globalIdx == 46) ||
+                    d.name.length >= b.name.length
+                ) {
+                    out[i] = OcrSkill(d.globalIdx, d.name, b.pts)
+                }
+            }
+        }
+        val slots = if (base.slots in 0..3) base.slots else dict.slots
+        return OcrCharm(base.kind, slots, out)
+    }
 
     fun detectKind(charm: OcrCharm): Int {
         if (charm.skills.isEmpty()) return -1
