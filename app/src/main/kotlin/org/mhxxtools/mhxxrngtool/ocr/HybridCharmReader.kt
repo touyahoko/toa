@@ -95,7 +95,7 @@ object HybridCharmReader {
                         null
                     }
                     if (wasm != null && wasm.charm.skills.isNotEmpty()) {
-                        return@withContext Result.success(finalize(wasm.charm, "wasm ${wasm.note}", wasm.confidence, preferredKind))
+                        return@withContext kotlin.Result.success(finalize(wasm.charm, "wasm ${wasm.note}", wasm.confidence, preferredKind))
                     }
                     error("認識失敗 template=${local?.note}")
                 }
@@ -109,9 +109,9 @@ object HybridCharmReader {
                 val conf = (0.55f + finalSkills.size * 0.15f + if (slots in 0..3) 0.1f else 0f)
                     .coerceAtMost(0.98f)
                 val note = "tmpl→mlkit ${notes.joinToString(",")} slots=$slots"
-                Result.success(finalize(OcrCharm(-1, slots, finalSkills), note, conf, preferredKind))
+                kotlin.Result.success(finalize(OcrCharm(-1, slots, finalSkills), note, conf, preferredKind))
             } catch (e: Exception) {
-                Result.failure(e)
+                kotlin.Result.failure(e)
             }
         }
 
