@@ -152,7 +152,7 @@ class BluetoothHidGamepad(private val context: Context) {
             "MHXX Gamepad",
             "MHXX RNG experimental HID gamepad",
             "MHXXTools",
-            BluetoothHidDevice.SUBCLASS1_GAMEPAD,
+            BluetoothHidDevice.SUBCLASS2_GAMEPAD,
             DESCRIPTOR
         )
         val inQos = BluetoothHidDeviceAppQosSettings(

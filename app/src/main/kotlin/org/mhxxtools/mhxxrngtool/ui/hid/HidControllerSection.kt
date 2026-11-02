@@ -68,7 +68,7 @@ fun HidControllerSection() {
     Column(
         Modifier
             .fillMaxWidth()
-            .background(HtmlColors.Card, RoundedCornerShape(12.dp))
+            .background(HtmlColors.Surface, RoundedCornerShape(12.dp))
             .padding(12.dp)
     ) {
         Text("Bluetooth HID コントローラ（実験）", color = HtmlColors.Text, fontWeight = FontWeight.Bold, fontSize = 14.sp)
