@@ -38,8 +38,8 @@ object HybridCharmReader {
                     if (pts <= 0) return -500
                     var s = c.skills.size * 30 + pts
                     // skills.rs / 追加リスト内なら加点
-                    if (c.skills.all { SkillCatalog.isMatchCandidate(it.globalIdx) }) s += 20
-                    if (c.skills.all { SkillCatalog.isOfficial(it.globalIdx) }) s += 10
+                    // 公式スキルへの加点はしない（追加スキルが公式に負ける原因になるため）
+                    // ポイントが付いている結果を優先
                     if (c.slots in 0..3) s += 5
                     return s
                 }
