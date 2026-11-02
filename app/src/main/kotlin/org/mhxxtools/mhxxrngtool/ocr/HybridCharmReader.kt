@@ -70,22 +70,10 @@ object HybridCharmReader {
                     // recycle only if we created a new bitmap - scale may return new
                 }
 
-                // 3) 合成: ML Kit で2行取れたらそれを主に。1行だけならテンプレとマージ
+                // 3) 行ごとに「名前は ML 優先、ポイントはテンプレ優先」で合成
+                //    （+6→+9 の数字誤読、窮地→闘魂 の似字誤読を抑える）
                 val tmplSkills = local?.charm?.skills.orEmpty()
-                val finalSkills: List<OcrSkill> = when {
-                    mlSkills.size >= 2 -> mlSkills
-                    mlSkills.size == 1 && tmplSkills.isNotEmpty() -> {
-                        // 行0がML、行1がテンプレなど
-                        if (tmplSkills.size >= 2) {
-                            listOf(mlSkills[0], pickOther(tmplSkills, mlSkills[0]))
-                        } else {
-                            mlSkills + tmplSkills.filter { it.globalIdx != mlSkills[0].globalIdx }
-                        }
-                    }
-                    mlSkills.size == 1 -> mlSkills
-                    tmplSkills.isNotEmpty() -> tmplSkills
-                    else -> emptyList()
-                }.distinctBy { it.globalIdx }.take(2)
+                val finalSkills = mergeRows(mlSkills, tmplSkills)
 
                 if (finalSkills.isEmpty()) {
                     // WASM 最後の手段
@@ -200,6 +188,41 @@ object HybridCharmReader {
         if (Regex("(?:[-－─—–―_]\\s*){2,}").containsMatchIn(u)) return 0
         if (u.contains("---") || u.contains("なし")) return 0
         return -1
+    }
+
+
+    /**
+     * 行単位マージ:
+     * - スキル名: ML Kit 辞書が取れたら優先。ただし既知混同はテンプレを優先
+     * - ポイント: テンプレの数字照合を優先（ML の 6↔9 誤読対策）
+     */
+    private fun mergeRows(ml: List<OcrSkill>, tmpl: List<OcrSkill>): List<OcrSkill> {
+        val n = maxOf(ml.size, tmpl.size, 2)
+        val out = mutableListOf<OcrSkill>()
+        for (i in 0 until n) {
+            val m = ml.getOrNull(i)
+            val tp = tmpl.getOrNull(i)
+            if (m == null && tp == null) continue
+            var id = m?.globalIdx ?: tp!!.globalIdx
+            var name = m?.name ?: tp!!.name
+            // 混同: 闘魂(93) vs 窮地(100)
+            if (id == 93 && tp?.globalIdx == 100) {
+                id = 100
+                name = tp.name
+            }
+            if (id == 50 && tp?.globalIdx == 59) {
+                id = 59
+                name = tp.name
+            }
+            // ポイントはテンプレ優先
+            val pts = when {
+                tp != null && tp.pts in 1..20 -> tp.pts
+                m != null && m.pts in 1..20 -> m.pts
+                else -> continue
+            }
+            out += OcrSkill(id, name, pts)
+        }
+        return out.distinctBy { it.globalIdx }.take(2)
     }
 
     fun detectKind(charm: OcrCharm): Int {
