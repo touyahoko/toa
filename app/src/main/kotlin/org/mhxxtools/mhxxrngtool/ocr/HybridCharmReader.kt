@@ -37,7 +37,7 @@ object HybridCharmReader {
         preferredKind: Int = -1
     ): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
-            runCatching {
+            try {
                 // 1) テンプレ（位置合わせ込み）
                 val local = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
 
@@ -51,7 +51,9 @@ object HybridCharmReader {
                         NAME1 to PTS1,
                         NAME2 to PTS2
                     )
-                    for ((ni, (nb, pb)) in rows.withIndex()) {
+                    for (ni in rows.indices) {
+                        val nb = rows[ni].first
+                        val pb = rows[ni].second
                         val nameTxt = ocrRoi(aligned, nb)
                         val ptsTxt = ocrRoi(aligned, pb)
                         val skill = dictSkill(nameTxt, ptsTxt, local?.charm?.skills?.getOrNull(ni))
@@ -93,7 +95,7 @@ object HybridCharmReader {
                         null
                     }
                     if (wasm != null && wasm.charm.skills.isNotEmpty()) {
-                        return@runCatching finalize(wasm.charm, "wasm ${wasm.note}", wasm.confidence, preferredKind)
+                        return@withContext Result.success(finalize(wasm.charm, "wasm ${wasm.note}", wasm.confidence, preferredKind))
                     }
                     error("認識失敗 template=${local?.note}")
                 }
@@ -107,7 +109,9 @@ object HybridCharmReader {
                 val conf = (0.55f + finalSkills.size * 0.15f + if (slots in 0..3) 0.1f else 0f)
                     .coerceAtMost(0.98f)
                 val note = "tmpl→mlkit ${notes.joinToString(",")} slots=$slots"
-                finalize(OcrCharm(-1, slots, finalSkills), note, conf, preferredKind)
+                Result.success(finalize(OcrCharm(-1, slots, finalSkills), note, conf, preferredKind))
+            } catch (e: Exception) {
+                Result.failure(e)
             }
         }
 
