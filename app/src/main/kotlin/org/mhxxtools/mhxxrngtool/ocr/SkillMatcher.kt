@@ -224,39 +224,54 @@ object SkillMatcher {
         val n = normalizeNameForSearch(rawName)
         if (n.isEmpty()) return -1
 
-        // Step 1: SKILL_NAMES 完全一致 (HTML Step1 互換)
+        // Step 1: 完全一致
         SKILL_NAMES.forEachIndexed { i, sn ->
             if (normalizeNameForSearch(sn) == n) return i
         }
 
-        // Step 2: SKILL_ALIASES 完全一致 (HTML Step2 互換 / OCR誤読バリアント含む)
+        // Step 2: エイリアス完全一致
         SKILL_ALIASES[n]?.let { return it }
 
-        // Step 3: スキル名が OCRテキストを含む (HTML Step3 互換)
-        // 例: n="斬れ" → norm="斬れ味" → norm.contains("斬れ") = true
-        // 例: n="溜め" → norm="溜め短縮" → norm.contains("溜め") = true
-        SKILL_NAMES.forEachIndexed { i, sn ->
-            val norm = normalizeNameForSearch(sn)
-            if (norm.length >= 2 && norm.contains(n)) return i
-        }
-
-        // Step 4: OCRテキストがスキル名を含む (HTML Step4 互換)
-        // 例: n="斬れ味スキル" → norm="斬れ味" → n.contains("斬れ味") = true
-        if (n.length >= 2) {
+        // Step 3: スキル名 ⊇ OCR → 最長一致（強撃瓶追加を短い公式より優先）
+        run {
+            var bestI = -1
+            var bestLen = -1
             SKILL_NAMES.forEachIndexed { i, sn ->
                 val norm = normalizeNameForSearch(sn)
-                if (norm.length >= 2 && n.contains(norm)) return i
+                if (norm.length >= 2 && norm.contains(n) && norm.length > bestLen) {
+                    bestLen = norm.length
+                    bestI = i
+                }
             }
+            if (bestI >= 0) return bestI
         }
 
-        // Step 5: SKILL_ALIASES 両方向包含チェック (HTML Step5 互換)
-        // 第1節: OCRテキストがエイリアスを含む  例: n="痛撃123" → alias="痛撃"
-        // 第2節: エイリアスが OCRテキストを含む  例: n="痛" → alias="痛撃" (HTML互換追加)
+        // Step 4: OCR ⊇ スキル名 → 最長のスキル名
         if (n.length >= 2) {
-            for ((alias, si) in SKILL_ALIASES) {
-                if (alias.length >= 2 && n.contains(alias)) return si
-                if (alias.length >= 2 && alias.contains(n)) return si
+            var bestI = -1
+            var bestLen = -1
+            SKILL_NAMES.forEachIndexed { i, sn ->
+                val norm = normalizeNameForSearch(sn)
+                if (norm.length >= 2 && n.contains(norm) && norm.length > bestLen) {
+                    bestLen = norm.length
+                    bestI = i
+                }
             }
+            if (bestI >= 0) return bestI
+        }
+
+        // Step 5: エイリアス包含（長い alias 優先）
+        if (n.length >= 2) {
+            var bestI = -1
+            var bestLen = -1
+            for ((alias, si) in SKILL_ALIASES) {
+                if (alias.length < 2) continue
+                if ((n.contains(alias) || alias.contains(n)) && alias.length > bestLen) {
+                    bestLen = alias.length
+                    bestI = si
+                }
+            }
+            if (bestI >= 0) return bestI
         }
 
         return -1

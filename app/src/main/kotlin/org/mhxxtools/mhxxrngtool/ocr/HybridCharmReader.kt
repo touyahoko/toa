@@ -6,9 +6,15 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
+import org.mhxxtools.mhxxrngtool.rng.SKILL_NAMES
 
 /**
- * 公式 WASM 優先。ローカルは skills.rs + 追加スキル見本で照合。
+ * 鑑定パイプライン:
+ *  1) ML Kit 日本語 OCR + SKILL_NAMES 辞書マッチ（優先）
+ *  2) テンプレ照合 RenkinSwitchReader
+ *  3) WASM 錬金リーダー
+ *
+ * 似たスキル名（強撃瓶追加 vs 重撃弾強化）は文字列辞書の方が安定しやすい。
  */
 object HybridCharmReader {
     private const val TAG = "HybridCharm"
@@ -22,50 +28,82 @@ object HybridCharmReader {
     ): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             runCatching {
+                // ── 1) ML Kit + 辞書 ──
+                val mlkit = try {
+                    val text = AndroidOcr.ocrBitmap(bitmap)
+                    Log.i(TAG, "mlkit text len=${text.length}: ${text.take(120).replace("\n","|")}")
+                    val charm = parseOcrCharm(text)
+                    if (charm.skills.isNotEmpty() && charm.skills.any { it.pts > 0 }) {
+                        val conf = (0.55f + charm.skills.size * 0.15f +
+                            if (charm.slots in 0..3) 0.1f else 0f).coerceAtMost(0.95f)
+                        Result(charm, "mlkit+dict skills=${charm.skills.size}", conf)
+                    } else null
+                } catch (e: Exception) {
+                    Log.w(TAG, "mlkit: ${e.message}")
+                    null
+                }
+
+                // ── 2) ローカルテンプレ ──
+                val local = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
+
+                // ── 3) WASM ──
                 val wasm = try {
                     RenkinWasmBridge.read(context, bitmap)
                 } catch (e: Exception) {
                     Log.w(TAG, "wasm: ${e.message}")
                     null
                 }
-                val local = RenkinSwitchReader.read(context, bitmap, preferredKind = -1)
 
-                fun score(r: RenkinSwitchReader.Result?): Int {
+                fun scoreTemplate(r: RenkinSwitchReader.Result?): Int {
                     if (r == null) return -1000
                     val c = r.charm
                     if (c.skills.isEmpty()) return -1000
                     val pts = c.skills.sumOf { it.pts }
                     if (pts <= 0) return -500
                     var s = c.skills.size * 30 + pts
-                    // skills.rs / 追加リスト内なら加点
-                    // 公式スキルへの加点はしない（追加スキルが公式に負ける原因になるため）
-                    // ポイントが付いている結果を優先
                     if (c.slots in 0..3) s += 5
                     return s
                 }
 
-                val ws = score(wasm)
-                val ls = score(local)
-                Log.i(TAG, "score wasm=$ws (${wasm?.note}) local=$ls (${local?.note})")
+                val ls = scoreTemplate(local)
+                val ws = scoreTemplate(wasm)
+                Log.i(TAG, "score mlkit=${mlkit != null} local=$ls wasm=$ws")
 
-                val base = when {
-                    ws >= ls && ws > -500 -> wasm!!
-                    ls > -500 -> local!!
-                    wasm != null && wasm.charm.skills.isNotEmpty() -> wasm
-                    local != null && local.charm.skills.isNotEmpty() -> local
-                    else -> error("認識失敗 wasm=${wasm?.note} local=${local?.note}")
+                // ML Kit でスキル名+ポイントが取れたら最優先
+                val base: RenkinSwitchReader.Result? = null // unused type bridge
+                val chosen: Result = when {
+                    mlkit != null && mlkit.charm.skills.size >= 1 -> {
+                        // テンプレ側に同じポイントで別スキルがいる場合は、
+                        // 辞書の正式名を優先（強撃瓶追加を守る）
+                        mlkit
+                    }
+                    ls >= ws && ls > -500 -> {
+                        val r = local!!
+                        Result(r.charm, "renkin ${r.note}", r.confidence)
+                    }
+                    ws > -500 -> {
+                        val r = wasm!!
+                        Result(r.charm, "wasm ${r.note}", r.confidence)
+                    }
+                    local != null && local.charm.skills.isNotEmpty() ->
+                        Result(local.charm, "renkin-fallback ${local.note}", local.confidence)
+                    wasm != null && wasm.charm.skills.isNotEmpty() ->
+                        Result(wasm.charm, "wasm-fallback ${wasm.note}", wasm.confidence)
+                    mlkit != null -> mlkit
+                    else -> error("認識失敗 mlkit/local/wasm いずれもスキルなし")
                 }
 
-                val source = if (base === wasm) "wasm" else "renkin"
-                val autoKind = detectKind(base.charm)
+                val autoKind = detectKind(chosen.charm)
                 val kind = when {
                     preferredKind in 0..3 -> preferredKind
                     autoKind in 0..3 -> autoKind
                     else -> -1
                 }
                 val kindLabel = listOf("風化", "古び", "光る", "なぞ").getOrNull(kind) ?: "不明"
-                val charm = if (kind in 0..3) OcrCharm(kind, base.charm.slots, base.charm.skills) else base.charm
-                Result(charm, "$source kind=$kindLabel ${base.note}", base.confidence)
+                val charm = if (kind in 0..3) {
+                    OcrCharm(kind, chosen.charm.slots, chosen.charm.skills)
+                } else chosen.charm
+                Result(charm, "${chosen.note} kind=$kindLabel", chosen.confidence)
             }
         }
 
@@ -75,7 +113,10 @@ object HybridCharmReader {
         var bestS = 0
         for (k in 0..3) {
             val sc = scoreKind(charm.skills, k)
-            if (sc > bestS) { bestS = sc; bestK = k }
+            if (sc > bestS) {
+                bestS = sc
+                bestK = k
+            }
         }
         return bestK
     }
