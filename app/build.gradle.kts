@@ -71,9 +71,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.2")
 
     // ML Kit Japanese OCR (on-device, no API key needed) - 鑑定スキル読取用
-    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
     // ML Kit Latin OCR - 数字読取用 (調合動画解析)
-    implementation("com.google.mlkit:text-recognition:16.0.0")
     // QR (Switch スマホへ送る)
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("androidx.camera:camera-camera2:1.3.4")

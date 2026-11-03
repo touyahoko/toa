@@ -8,12 +8,8 @@ import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
 
 /**
- * 鑑定 = 錬金リーダー本体と同じ認識法のみ。
- *
- * - RenkinSwitchReader: reference 位置合わせ + トップハット + スキル見本 NCC
- *   （公式 mhxx-renkin-reader と同じパイプライン）
- * - ML Kit / 全画面OCR / 辞書上書きは使わない
- * - WASM はテンプレが空のときだけの保険
+ * 鑑定 = テンプレ照合のみ（錬金リーダー方式）。
+ * ML Kit / 辞書OCR / 全画面OCR は一切使わない。
  */
 object HybridCharmReader {
     private const val TAG = "HybridCharm"
@@ -27,7 +23,6 @@ object HybridCharmReader {
     ): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             try {
-                // 錬金リーダー方式のみ
                 val local = RenkinSwitchReader.read(context, bitmap, preferredKind = preferredKind)
                 Log.i(TAG, "renkin: ${local?.note} skills=${local?.charm?.skills}")
 
@@ -37,7 +32,7 @@ object HybridCharmReader {
                     )
                 }
 
-                // 保険: WASM（公式エンジン）。テンプレ失敗時のみ
+                // テンプレ失敗時のみ WASM 保険（ML Kit ではない）
                 val wasm = try {
                     RenkinWasmBridge.read(context, bitmap)
                 } catch (e: Exception) {
@@ -51,7 +46,7 @@ object HybridCharmReader {
                 }
 
                 kotlin.Result.failure(
-                    IllegalStateException("認識失敗 renkin=${local?.note} wasm=${wasm?.note}")
+                    IllegalStateException("認識失敗 renkin=${local?.note}")
                 )
             } catch (e: Exception) {
                 kotlin.Result.failure(e)
