@@ -8,22 +8,22 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import java.nio.FloatBuffer
 import java.util.Collections
-import kotlin.math.max
 
 /**
- * PaddleOCR 認識（PP-OCR rec ONNX）エンジン。
- * assets/paddle_ocr/rec.onnx + keys.txt が必要。
- * 検出は行わず、呼び出し側が行ROIを切り出して recognizeLine する。
+ * PaddleOCR 認識（PP-OCR rec ONNX）
+ * assets/paddle_ocr/rec.onnx + keys.txt 必須
  */
 object PaddleOcrEngine {
     private const val TAG = "PaddleOcr"
+
     @Volatile private var session: OrtSession? = null
     @Volatile private var env: OrtEnvironment? = null
     @Volatile private var keys: List<String> = emptyList()
-    @Volatile private var ready = false
+    @Volatile private var ready: Boolean = false
     private var inputName: String = "x"
-    private var recH = 48
-    private var recW = 320
+
+    private const val REC_H = 48
+    private const val REC_W = 320
 
     fun isReady(): Boolean = ready
 
@@ -32,125 +32,94 @@ object PaddleOcrEngine {
         if (ready) return true
         return try {
             val am = context.assets
-            val keyText = try {
-                am.open("paddle_ocr/keys.txt").bufferedReader().readText()
-            } catch (e: Exception) {
-                Log.e(TAG, "keys.txt missing: ${e.message}")
-                return false
-            }
+            val keyText = am.open("paddle_ocr/keys.txt").bufferedReader(Charsets.UTF_8).readText()
             keys = keyText.lines().map { it.trimEnd('\r') }.filter { it.isNotEmpty() }
-            // blank index = keys.size（CTC）
-            val modelBytes = try {
-                am.open("paddle_ocr/rec.onnx").use { it.readBytes() }
-            } catch (e: Exception) {
-                Log.e(TAG, "rec.onnx missing: ${e.message}")
+            if (keys.isEmpty()) {
+                Log.e(TAG, "keys.txt empty")
                 return false
             }
+            val modelBytes = am.open("paddle_ocr/rec.onnx").use { it.readBytes() }
             val e = OrtEnvironment.getEnvironment()
             val opts = OrtSession.SessionOptions()
             opts.setIntraOpNumThreads(2)
             val s = e.createSession(modelBytes, opts)
             session = s
             env = e
-            s.inputNames.firstOrNull()?.let { inputName = it }
+            inputName = s.inputNames.iterator().next()
             ready = true
-            Log.i(TAG, "Paddle OCR ready keys=${keys.size} input=$inputName")
+            Log.i(TAG, "ready keys=${keys.size} input=$inputName")
             true
-        } catch (e: Exception) {
-            Log.e(TAG, "init failed", e)
+        } catch (ex: Exception) {
+            Log.e(TAG, "init failed: ${ex.message}", ex)
             ready = false
             false
         }
     }
 
-    /**
-     * 行画像（ARGB Bitmap）→ 文字列
-     * PP-OCR rec 前処理: H=48, W可変, normalize
-     */
     @Synchronized
     fun recognizeLine(bitmap: Bitmap): String {
         if (!ready) return ""
         val s = session ?: return ""
         val e = env ?: return ""
-        val resized = resizeNormImg(bitmap, recH, recW)
-        val (fb, shape) = resized
+        val (fb, shape) = resizeNormImg(bitmap, REC_H, REC_W)
         var tensor: OnnxTensor? = null
         return try {
             tensor = OnnxTensor.createTensor(e, fb, shape)
-            val result = s.run(Collections.singletonMap(inputName, tensor))
-            result.use { out ->
-                val value = out.get(0)
-                decodeCtc(value.getValue())
+            val inputs = Collections.singletonMap(inputName, tensor as OnnxTensor)
+            s.run(inputs).use { result ->
+                val value = result[0].value
+                decodeCtc(value)
             }
         } catch (ex: Exception) {
             Log.w(TAG, "recognizeLine: ${ex.message}")
             ""
         } finally {
-            tensor?.close()
+            try { tensor?.close() } catch (_: Exception) {}
         }
     }
 
     private fun resizeNormImg(bmp: Bitmap, imgH: Int, imgW: Int): Pair<FloatBuffer, LongArray> {
-        val w0 = bmp.width.coerceAtLeast(1)
-        val h0 = bmp.height.coerceAtLeast(1)
+        val w0 = maxOf(1, bmp.width)
+        val h0 = maxOf(1, bmp.height)
         val ratio = w0.toFloat() / h0.toFloat()
-        var resizeW = (imgH * ratio).toInt().coerceIn(8, imgW)
+        val resizeW = (imgH * ratio).toInt().coerceIn(8, imgW)
         val scaled = Bitmap.createScaledBitmap(bmp, resizeW, imgH, true)
         val n = 1 * 3 * imgH * imgW
-        val buf = FloatArray(n)
+        val arr = FloatArray(n)
         val pixels = IntArray(scaled.width * scaled.height)
         scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
-        // CHW, pad right with 0, normalize (img/255 - 0.5)/0.5
         for (y in 0 until imgH) {
             for (x in 0 until imgW) {
-                val v = if (x < scaled.width) {
+                val r: Float
+                val g: Float
+                val b: Float
+                if (x < scaled.width) {
                     val c = pixels[y * scaled.width + x]
-                    val r = ((c shr 16) and 0xff) / 255f
-                    val g = ((c shr 8) and 0xff) / 255f
-                    val b = (c and 0xff) / 255f
-                    floatArrayOf(r, g, b)
-                } else floatArrayOf(0f, 0f, 0f)
-                for (c in 0..2) {
-                    val norm = (v[c] - 0.5f) / 0.5f
-                    buf[c * imgH * imgW + y * imgW + x] = norm
+                    r = ((c shr 16) and 0xff) / 255f
+                    g = ((c shr 8) and 0xff) / 255f
+                    b = (c and 0xff) / 255f
+                } else {
+                    r = 0f; g = 0f; b = 0f
                 }
+                val nr = (r - 0.5f) / 0.5f
+                val ng = (g - 0.5f) / 0.5f
+                val nb = (b - 0.5f) / 0.5f
+                arr[0 * imgH * imgW + y * imgW + x] = nr
+                arr[1 * imgH * imgW + y * imgW + x] = ng
+                arr[2 * imgH * imgW + y * imgW + x] = nb
             }
         }
         if (scaled !== bmp) scaled.recycle()
         val fb = FloatBuffer.allocate(n)
-        fb.put(buf)
+        fb.put(arr)
         fb.rewind()
-        return fb to longArrayOf(1, 3, imgH.toLong(), imgW.toLong())
+        return fb to longArrayOf(1L, 3L, imgH.toLong(), imgW.toLong())
     }
 
-    @Suppress("UNCHECKED_CAST")
     private fun decodeCtc(raw: Any?): String {
-        // 出力形状想定: [1, T, numClass] または [1, numClass, T]
-        val sb = StringBuilder()
-        try {
-            when (raw) {
-                is Array<*> -> {
-                    // nested arrays
-                    val seq = flattenToIndices(raw)
-                    var prev = -1
-                    for (idx in seq) {
-                        if (idx != prev && idx != 0 && idx < keys.size) {
-                            // 多くのPP-OCRは index0=blank
-                            val ch = keys.getOrNull(idx) ?: keys.getOrNull(idx - 1)
-                            if (ch != null && ch != "blank") sb.append(ch)
-                        }
-                        // standard: blank=0, char = keys[idx-1]
-                        prev = idx
-                    }
-                    // 再デコード standard CTC
-                    return decodeCtcStandard(seq)
-                }
-                else -> Log.w(TAG, "unknown output ${raw?.javaClass}")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "decode: ${e.message}")
-        }
-        return sb.toString()
+        if (raw == null) return ""
+        val indices = argmaxSequence(raw)
+        return decodeCtcStandard(indices)
     }
 
     private fun decodeCtcStandard(indices: List<Int>): String {
@@ -163,70 +132,75 @@ object PaddleOcrEngine {
             val k = idx - 1
             if (k in keys.indices) {
                 val ch = keys[k]
-                if (ch.isNotEmpty()) sb.append(ch)
+                if (ch.isNotEmpty() && ch != "blank") sb.append(ch)
             }
         }
         return sb.toString()
     }
 
-    private fun flattenToIndices(raw: Array<*>): List<Int> {
-        // [1][T][C] -> argmax on last dim
+    @Suppress("UNCHECKED_CAST")
+    private fun argmaxSequence(raw: Any): List<Int> {
         val out = ArrayList<Int>()
         try {
-            val a0 = raw[0] as Array<*>
-            // a0 is T x C or C x T
-            if (a0.isEmpty()) return out
-            val first = a0[0]
-            if (first is FloatArray) {
-                // T x C as FloatArray rows? or nested
-            }
-            if (first is Array<*>) {
-                // T x C
-                for (t in a0.indices) {
-                    val row = a0[t]
-                    out.add(argmaxRow(row))
+            when (raw) {
+                is Array<*> -> {
+                    if (raw.isEmpty()) return out
+                    val a0 = raw[0]
+                    if (a0 is Array<*>) {
+                        // [1][T][C]
+                        for (t in a0.indices) {
+                            out.add(argmaxAny(a0[t]))
+                        }
+                    } else if (a0 is FloatArray) {
+                        for (t in raw.indices) {
+                            out.add(argmaxFloat(raw[t] as FloatArray))
+                        }
+                    }
                 }
-                return out
-            }
-            if (first is FloatArray) {
-                for (t in a0.indices) {
-                    val row = a0[t] as FloatArray
-                    var bi = 0
-                    var bv = row[0]
-                    for (i in 1 until row.size) if (row[i] > bv) { bv = row[i]; bi = i }
-                    out.add(bi)
-                }
-                return out
             }
         } catch (e: Exception) {
-            Log.w(TAG, "flatten: ${e.message}")
+            Log.w(TAG, "argmaxSequence: ${e.message}")
         }
         return out
     }
 
-    private fun argmaxRow(row: Any?): Int {
-        when (row) {
-            is FloatArray -> {
-                var bi = 0; var bv = row[0]
-                for (i in 1 until row.size) if (row[i] > bv) { bv = row[i]; bi = i }
-                return bi
-            }
+    private fun argmaxAny(row: Any?): Int {
+        return when (row) {
+            is FloatArray -> argmaxFloat(row)
             is Array<*> -> {
                 var bi = 0
                 var bv = (row[0] as? Number)?.toFloat() ?: -1e9f
                 for (i in 1 until row.size) {
                     val v = (row[i] as? Number)?.toFloat() ?: continue
-                    if (v > bv) { bv = v; bi = i }
+                    if (v > bv) {
+                        bv = v
+                        bi = i
+                    }
                 }
-                return bi
+                bi
+            }
+            else -> 0
+        }
+    }
+
+    private fun argmaxFloat(row: FloatArray): Int {
+        var bi = 0
+        var bv = row[0]
+        for (i in 1 until row.size) {
+            if (row[i] > bv) {
+                bv = row[i]
+                bi = i
             }
         }
-        return 0
+        return bi
     }
 
     @Synchronized
     fun close() {
-        try { session?.close() } catch (_: Exception) {}
+        try {
+            session?.close()
+        } catch (_: Exception) {
+        }
         session = null
         ready = false
     }
