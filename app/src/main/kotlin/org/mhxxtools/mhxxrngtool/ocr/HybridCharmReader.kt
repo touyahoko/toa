@@ -31,7 +31,7 @@ object HybridCharmReader {
                 }
                 kotlin.Result.failure(
                     IllegalStateException(
-                        "PaddleOCR認識失敗。assets/paddle_ocr/ に rec.onnx と keys.txt を配置してください。 detail=${paddle?.note}"
+                        "PaddleOCR認識失敗（モデル未読込 or 文字化失敗）。assets/paddle_ocr/rec.onnx+keys.txt をAPKに含め再ビルド。 note=${paddle?.note}"
                     )
                 )
             } catch (e: Exception) {
