@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,13 +49,14 @@ import org.mhxxtools.mhxxrngtool.ui.reward.RewardViewModel
 import org.mhxxtools.mhxxrngtool.ui.search.SearchScreen
 import org.mhxxtools.mhxxrngtool.ui.search.SearchViewModel
 import org.mhxxtools.mhxxrngtool.ui.theme.HtmlColors
+import org.mhxxtools.mhxxrngtool.ui.snipe.SnipeNavigatorScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerScreen
 import org.mhxxtools.mhxxrngtool.ui.timer.TimerViewModel
 import org.mhxxtools.mhxxrngtool.ui.gallery.GalleryViewModel
 import org.mhxxtools.mhxxrngtool.ui.settings.SettingsScreen
 import android.net.Uri
 
-private val TABS = listOf("検索", "周辺", "調合", "位置", "鑑定", "タイマー")
+private val TABS = listOf("検索", "周辺", "調合", "位置", "鑑定", "タイマー", "ナビ")
 
 @Composable
 fun MainScreen(appState: AppStateViewModel) {
@@ -68,6 +70,9 @@ fun MainScreen(appState: AppStateViewModel) {
     var showSettings by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    val timerState by timerVm.state.collectAsState()
+    val naviCurrent = timerState.currentPosFrame.let { if (it >= 0) it.toInt() else null }
+    val naviTarget = timerState.targetFrame.let { if (it >= 0) it.toInt() else null }
     val context = LocalContext.current
 
     LaunchedEffect(appState.kind) {
@@ -202,6 +207,10 @@ fun MainScreen(appState: AppStateViewModel) {
                     }
                 )
                 5 -> TimerScreen(vm = timerVm)
+                6 -> SnipeNavigatorScreen(
+                    externalCurrentFrame = naviCurrent,
+                    externalTargetFrame = naviTarget
+                )
             }
             if (showSettings) {
                 Box(
