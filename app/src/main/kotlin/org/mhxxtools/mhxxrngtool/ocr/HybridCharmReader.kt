@@ -8,8 +8,7 @@ import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
 
 /**
- * 鑑定 = 本家 mhxx-renkin-reader と同じテンプレ照合のみ。
- * ML Kit は使用しない。
+ * 鑑定 = PaddleOCR（テンプレート照合は使わない）
  */
 object HybridCharmReader {
     private const val TAG = "HybridCharm"
@@ -23,25 +22,18 @@ object HybridCharmReader {
     ): kotlin.Result<Result> =
         withContext(Dispatchers.Default) {
             try {
-                val local = RenkinSwitchReader.read(context, bitmap, preferredKind = preferredKind)
-                Log.i(TAG, "renkin: ${local?.note} skills=${local?.charm?.skills}")
-                if (local != null && local.charm.skills.isNotEmpty()) {
+                val paddle = PaddleCharmReader.read(context, bitmap, preferredKind)
+                Log.i(TAG, "paddle: ${paddle?.note} skills=${paddle?.charm?.skills}")
+                if (paddle != null && paddle.charm.skills.isNotEmpty()) {
                     return@withContext kotlin.Result.success(
-                        finalize(local.charm, "renkin ${local.note}", local.confidence, preferredKind)
+                        finalize(paddle.charm, "paddle ${paddle.note}", paddle.confidence, preferredKind)
                     )
                 }
-                val wasm = try {
-                    RenkinWasmBridge.read(context, bitmap)
-                } catch (e: Exception) {
-                    Log.w(TAG, "wasm: ${e.message}")
-                    null
-                }
-                if (wasm != null && wasm.charm.skills.isNotEmpty()) {
-                    return@withContext kotlin.Result.success(
-                        finalize(wasm.charm, "wasm ${wasm.note}", wasm.confidence, preferredKind)
+                kotlin.Result.failure(
+                    IllegalStateException(
+                        "PaddleOCR認識失敗。assets/paddle_ocr/ に rec.onnx と keys.txt を配置してください。 detail=${paddle?.note}"
                     )
-                }
-                kotlin.Result.failure(IllegalStateException("認識失敗 renkin=${local?.note}"))
+                )
             } catch (e: Exception) {
                 kotlin.Result.failure(e)
             }
