@@ -7,12 +7,8 @@ import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * 画像読み込みのみ（ML Kit は使わない）。
- * 鑑定の文字認識は RenkinSwitchReader のテンプレ照合のみ。
- */
+/** 画像読み込みのみ。鑑定文字認識は HybridCharmReader（ML Kit / 辞書）。 */
 object AndroidOcr {
-
     suspend fun loadBitmap(context: Context, uri: Uri): Result<Bitmap> =
         withContext(Dispatchers.IO) {
             runCatching {
