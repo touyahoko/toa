@@ -8,7 +8,7 @@ import kotlinx.coroutines.withContext
 import org.mhxxtools.mhxxrngtool.rng.KIND_TABLES
 
 /**
- * 鑑定 = PaddleOCR（テンプレート照合は使わない）
+ * 鑑定 = PaddleOCR 全画面スキャン → OcrCharm →（ViewModel側で RNG 検索）
  */
 object HybridCharmReader {
     private const val TAG = "HybridCharm"
@@ -31,7 +31,7 @@ object HybridCharmReader {
                 }
                 kotlin.Result.failure(
                     IllegalStateException(
-                        "PaddleOCR認識失敗（モデル未読込 or 文字化失敗）。assets/paddle_ocr/rec.onnx+keys.txt をAPKに含め再ビルド。 note=${paddle?.note}"
+                        "全画面OCRでスキルを読めませんでした。護石パネルが写るように撮影するか、Switchスクショを使用してください。 note=${paddle?.note}"
                     )
                 )
             } catch (e: Exception) {
@@ -44,7 +44,7 @@ object HybridCharmReader {
         val kind = when {
             preferredKind in 0..3 -> preferredKind
             autoKind in 0..3 -> autoKind
-            else -> -1
+            else -> charm.kind
         }
         val kindLabel = listOf("風化", "古び", "光る", "なぞ").getOrNull(kind) ?: "不明"
         val out = if (kind in 0..3) OcrCharm(kind, charm.slots, charm.skills) else charm
@@ -71,15 +71,19 @@ object HybridCharmReader {
         val i1 = tbl.skill1.indexOf(s1.globalIdx)
         if (i1 < 0) return 0
         var score = 10
-        val sp1 = tbl.sp1[i1]
-        if (s1.pts in minOf(sp1[0], sp1[1])..maxOf(sp1[0], sp1[1])) score += 5
+        if (i1 in tbl.sp1.indices) {
+            val sp1 = tbl.sp1[i1]
+            if (s1.pts in minOf(sp1[0], sp1[1])..maxOf(sp1[0], sp1[1])) score += 5
+        }
         if (skills.size > 1) {
             val s2 = skills[1]
             val i2 = tbl.skill2.indexOf(s2.globalIdx)
-            if (i2 < 0) return 0
+            if (i2 < 0) return score
             score += 10
-            val sp2 = tbl.sp2[i2]
-            if (s2.pts in minOf(sp2[0], sp2[1])..maxOf(sp2[0], sp2[1])) score += 5
+            if (i2 in tbl.sp2.indices) {
+                val sp2 = tbl.sp2[i2]
+                if (s2.pts in minOf(sp2[0], sp2[1])..maxOf(sp2[0], sp2[1])) score += 5
+            }
         }
         return score
     }
