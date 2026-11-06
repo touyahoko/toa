@@ -81,6 +81,9 @@ dependencies {
     // OpenCV — 射影(ORB+RANSAC) / トップハット / テンプレ照合 (note TL;DR 方式)
     implementation("org.opencv:opencv:4.10.0")
 
+    // PaddleOCR PP-OCR recognition (ONNX Runtime)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.3")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
